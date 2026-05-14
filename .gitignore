@@ -1,52 +1,20 @@
 ```
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Database
-*.db
-*.db-journal
+*.pyc
+*.pyo
+*.pyd
 
 # Logs
 *.log
-logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
 
 # Environment
 .env
 .env.local
 .env.*
-
-# Dependencies
-.venv/
-venv/
-env/
-ENV/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
 ```
