@@ -140,12 +140,13 @@ async def main():
             
             # Decision making
             if current_confidence >= threshold:
-                # Calculate position size dynamically (using optimized weights)
+                # Calculate position size dynamically (using AnalysisContext)
+                current_price = all_data['5m'][0].iloc[-1]['close'] if len(all_data['5m']) > 0 else 0
+                
                 position_info = position_sizer.calculate(
                     current_confidence,
-                    analysis,
-                    all_data['5m'].iloc[-1]['close'] if len(all_data['5m']) > 0 else 0,
-                    optimized_weights  # Pass Autotuner weights
+                    context,  # Pass full context with lineage and results
+                    current_price
                 )
                 
                 signal_data['decision'] = 'OPEN'
@@ -154,6 +155,8 @@ async def main():
                 
                 logger.info(f"[CYCLE_{cycle_count}] SIGNAL: OPEN | Confidence: {current_confidence:.3f} >= {threshold:.3f}")
                 logger.info(f"Position: {position_info['position_pct']}% | SL: {position_info['sl_pct']}% | TP R/R: {position_info['rr_ratio']}")
+                logger.info(f"SL Reasoning: ATR({position_info['reasoning']['atr_source']})={position_info['reasoning']['atr_pct']:.2f}% | Regime: {position_info['reasoning']['regime_adjustment']} | Patterns: {position_info['reasoning']['pattern_adjustment']}")
+                logger.info(f"Data Quality Factor: {position_info['reasoning']['data_quality_factor']:.2f} | Details: {position_info['reasoning']['quality_details']}")
                 
                 # Create initial trade snapshot for Autotuner tracking
                 analyzer_results = {
@@ -168,11 +171,12 @@ async def main():
                         'trade_id': f"live_{cycle_count}",
                         'symbol': symbol,
                         'side': 'BUY',  # Simplified, should come from signal direction
-                        'entry_price': all_data['5m'][0].iloc[-1]['close'] if len(all_data['5m']) > 0 else 0,
+                        'entry_price': current_price,
                         'sl_percent': position_info['sl_pct'],
                         'tp_percent': position_info.get('tp_pct', 2.0),
-                        'position_size': position_info['position_size'],
-                        'confidence': current_confidence
+                        'position_size': position_info['position_pct'],
+                        'confidence': current_confidence,
+                        'reasoning': position_info['reasoning']  # Store full reasoning
                     },
                     analyzer_results=analyzer_results,
                     weights=optimized_weights
