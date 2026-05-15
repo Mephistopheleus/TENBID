@@ -104,15 +104,15 @@ class Autotuner:
             cursor.execute("""
                 INSERT INTO trade_analysis_log (
                     trade_id, timestamp, symbol, side, 
-                    btc_correlation, fractal_score, orderbook_score, 
+                    btc_correlation, btc_confidence, fractal_score, orderbook_score, 
                     pattern_score, regime_score, regime_type,
                     weights_used_json, sl_percent, position_size,
                     pnl_percent, pnl_usdt, is_winner, exit_reason,
                     max_drawdown_during_trade, max_profit_during_trade
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 snapshot.trade_id, snapshot.timestamp, snapshot.symbol, snapshot.side,
-                snapshot.btc_correlation, snapshot.fractal_score, snapshot.orderbook_score,
+                snapshot.btc_correlation, snapshot.btc_confidence, snapshot.fractal_score, snapshot.orderbook_score,
                 snapshot.pattern_score, snapshot.regime_score, snapshot.regime_type,
                 json.dumps(snapshot.weights_used), snapshot.sl_percent, snapshot.position_size,
                 snapshot.pnl_percent, snapshot.pnl_usdt, int(snapshot.is_winner), snapshot.exit_reason,
@@ -276,6 +276,7 @@ def init_autotuner_db(db_path: str = "trade_history.db"):
         symbol TEXT,
         side TEXT,
         btc_correlation REAL,
+        btc_confidence REAL,
         fractal_score REAL,
         orderbook_score REAL,
         pattern_score REAL,
