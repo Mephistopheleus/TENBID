@@ -1,14 +1,18 @@
 """Shadow Calculator - parallel calculations for forbidden trades and hypothesis testing"""
 import json
 from datetime import datetime
+from typing import Dict, Any, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ShadowCalculator:
     def __init__(self, config, db):
         self.db = db
         self.enabled = config.getboolean('SHADOW', 'enabled')
         self.tests = config.get_list('SHADOW', 'tests')
-    
-    def analyze_forbidden_trade(self, signal_data):
+        
+    def analyze_forbidden_trade(self, signal_data: Dict[str, Any], context_snapshot: Optional[Dict] = None):
         """Analyze what would happen if we opened a forbidden trade"""
         confidence = signal_data.get('confidence', 0)
         threshold = signal_data.get('threshold', 0.75)
@@ -27,7 +31,8 @@ class ShadowCalculator:
             'risk_reward_ratio': 2.0,
             'confidence_at_time': confidence,
             'estimated_win_probability': confidence * 100,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'context_snapshot': context_snapshot  # Store full context for Autotuner
         }
         
         signal_data['shadow_result'] = result
@@ -86,4 +91,50 @@ class ShadowCalculator:
             test_data['result'] = {'poc_level': data_dict.get('5m', {}).iloc[-1]['close'] if len(data_dict.get('5m', [])) > 0 else 0}
         
         return test_data
+
+    def create_trade_snapshot(self, trade_info: Dict[str, Any], analyzer_results: Dict[str, Any], 
+                            weights: Dict[str, float], outcome: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Create a complete snapshot of a trade decision for Autotuner analysis.
+        Called when a trade is opened (initial snapshot) and updated when closed.
+        """
+        snapshot = {
+            'trade_id': trade_info.get('trade_id', f"shadow_{datetime.now().timestamp()}"),
+            'timestamp': datetime.now().timestamp(),
+            'symbol': trade_info.get('symbol', 'UNKNOWN'),
+            'side': trade_info.get('side', 'BUY'),
+            
+            # Analyzer Scores at entry
+            'btc_correlation': analyzer_results.get('btc', {}).get('correlation', 0.0),
+            'btc_confidence': analyzer_results.get('btc', {}).get('confidence', 0.0),
+            'fractal_score': analyzer_results.get('fractal', {}).get('score', 0.0),
+            'orderbook_score': analyzer_results.get('orderbook', {}).get('score', 0.0),
+            'pattern_score': analyzer_results.get('pattern', {}).get('score', 0.0),
+            'regime_score': analyzer_results.get('regime', {}).get('score', 0.0),
+            'regime_type': analyzer_results.get('regime', {}).get('type', 'UNKNOWN'),
+            
+            # System Weights used
+            'weights_used': weights,
+            
+            # Decision Parameters
+            'entry_price': trade_info.get('entry_price', 0.0),
+            'sl_percent': trade_info.get('sl_percent', 0.0),
+            'tp_percent': trade_info.get('tp_percent', 0.0),
+            'position_size': trade_info.get('position_size', 0.0),
+            'final_confidence': trade_info.get('confidence', 0.0),
+            
+            # Outcome (filled when trade closes)
+            'exit_price': outcome.get('exit_price') if outcome else None,
+            'exit_reason': outcome.get('exit_reason') if outcome else None,
+            'pnl_percent': outcome.get('pnl_percent', 0.0) if outcome else 0.0,
+            'pnl_usdt': outcome.get('pnl_usdt', 0.0) if outcome else 0.0,
+            'is_winner': outcome.get('is_winner', False) if outcome else False,
+            
+            # Market Context during trade (filled when trade closes)
+            'max_drawdown_during_trade': outcome.get('max_drawdown', 0.0) if outcome else 0.0,
+            'max_profit_during_trade': outcome.get('max_profit', 0.0) if outcome else 0.0
+        }
+        
+        logger.debug(f"Created trade snapshot: {snapshot['trade_id']}")
+        return snapshot
 
