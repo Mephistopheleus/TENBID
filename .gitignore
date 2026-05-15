@@ -28,4 +28,5 @@ wheels/
 .env
 .env.local
 .env.*
-```
+```*.db
+__pycache__/
