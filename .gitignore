@@ -1,20 +1,12 @@
 ```
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
 
-# Database
+# Process output
+nohup.out
+
+# Database files
 *.db
-*.sqlite
-*.sqlite3
-
-# Environment
-.env
-.env.local
-.env.*
 ```
