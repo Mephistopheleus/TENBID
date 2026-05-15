@@ -19,8 +19,8 @@ class SyntheticTimeframes:
         result = {'5m': (base_df, base_lineage)}
         
         tf_map = {
-            '10m': '10T', '15m': '15T', '30m': '30T',
-            '1h': '60T', '4h': '240T', '12h': '720T'
+            '10m': '10min', '15m': '15min', '30m': '30min',
+            '1h': '60min', '4h': '240min', '12h': '720min'
         }
         
         for tf in self.timeframes:
