@@ -1,4 +1,5 @@
 ```
+<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -20,9 +21,19 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+=======
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+>>>>>>> origin/main
 
-# Database
+# Process output
+nohup.out
+
+# Database files
 *.db
+<<<<<<< HEAD
 
 # Environment
 .env
@@ -30,3 +41,6 @@ wheels/
 .env.*
 ```*.db
 __pycache__/
+=======
+```
+>>>>>>> origin/main
