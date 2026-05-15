@@ -1,6 +1,12 @@
 """
 TENBID - Advanced Scalping Trading System for Binance
 Complete modular architecture with shadow calculations and adaptive confidence
+
+ИСПРАВЛЕНИЯ:
+- Добавлен менеджер позиций для отслеживания активных сделок
+- Реализовано закрытие сделок по TP/SL/trailing
+- Autotuner получает данные о результатах сделок
+- Исправлены конфликты импортов
 """
 
 import asyncio
@@ -25,6 +31,49 @@ from trading.smart_trailing import SmartTrailing
 from shadow.shadow_calculator import ShadowCalculator
 from core.autotuner import Autotuner, init_autotuner_db, TradeContextSnapshot
 from reports.reporter import Reporter
+
+
+class PositionManager:
+    """Управление активными позициями"""
+    
+    def __init__(self):
+        self.active_positions = {}  # {trade_id: position_info}
+        self.position_snapshots = {}  # {trade_id: snapshot}
+    
+    def add_position(self, trade_id: str, position_info: dict, snapshot: dict):
+        """Добавить новую позицию"""
+        self.active_positions[trade_id] = {
+            'entry_price': position_info['entry_price'],
+            'side': position_info.get('side', 'BUY'),
+            'sl_price': position_info.get('sl_price'),
+            'tp_price': position_info.get('tp_price'),
+            'position_pct': position_info['position_pct'],
+            'entry_time': datetime.now(),
+            'high_since_entry': position_info['entry_price'],
+            'low_since_entry': position_info['entry_price']
+        }
+        self.position_snapshots[trade_id] = snapshot
+    
+    def update_price(self, trade_id: str, current_price: float):
+        """Обновить цену для позиции"""
+        if trade_id in self.active_positions:
+            pos = self.active_positions[trade_id]
+            if current_price > pos['high_since_entry']:
+                pos['high_since_entry'] = current_price
+            if current_price < pos['low_since_entry']:
+                pos['low_since_entry'] = current_price
+    
+    def remove_position(self, trade_id: str):
+        """Удалить позицию"""
+        if trade_id in self.active_positions:
+            del self.active_positions[trade_id]
+        if trade_id in self.position_snapshots:
+            del self.position_snapshots[trade_id]
+    
+    def get_active_count(self) -> int:
+        """Количество активных позиций"""
+        return len(self.active_positions)
+
 
 async def main():
     # Setup
@@ -57,6 +106,7 @@ async def main():
     shadow = ShadowCalculator(config, db)
     autotuner = Autotuner()  # Initialize Autotuner
     reporter = Reporter(db, config)
+    position_manager = PositionManager()  # Менеджер позиций
     
     # Connect to Binance
     await binance.connect()
@@ -84,12 +134,12 @@ async def main():
             new_candles, new_lineage = await data_mgr.fetch_latest()
             all_data = synth_tf.build_all(new_candles, new_lineage)
             
-            # Analyze market (теперь анализ включает маркировку)
+            # Analyze market
             analysis = market_analyzer.analyze(all_data)
             
-            # Создаем контекст анализа с полной маркировкой
+            # Создаем контекст анализа
             symbol = config.get('GENERAL', 'symbol')
-            base_tf = '5m'  # Базовый таймфрейм
+            base_tf = '5m'
             
             context = AnalysisContext(
                 symbol=symbol,
@@ -111,101 +161,211 @@ async def main():
             pattern_result = pattern_analyzer.analyze(context)
             regime_result = market_regime_analyzer.analyze(context)
             
-            # Calculate confidence с полной маркировкой
+            # Calculate confidence
             confidence_result = confidence_sys.calculate(analysis, all_data, btc_result, fractal_result, orderbook_result, pattern_result, regime_result)
             current_confidence = confidence_result['total_confidence']
             score_lineage = confidence_result.get('score_lineage')
             
-            # Get optimized weights from Autotuner (dynamic, not static)
+            # Get optimized weights from Autotuner
             optimized_weights = autotuner.get_recommendation({})
             
             # Get adaptive threshold
             threshold = confidence_sys.get_adaptive_threshold(analysis)
             
-            # Prepare signal data with full markers
-            signal_data = {
-                'timestamp': cycle_start.isoformat(),
-                'cycle': cycle_count,
-                'confidence': current_confidence,
-                'threshold': threshold,
-                'analysis': analysis,
-                'prices': {
-                    'current': all_data['5m'][0].iloc[-1]['close'] if len(all_data['5m']) > 0 else 0
-                },
-                'lineage_summary': {
-                    'avg_confidence': score_lineage.confidence if score_lineage else 0,
-                    'min_confidence': min(lg.confidence for lg in confidence_result.get('component_lineages', {}).values()) if confidence_result.get('component_lineages') else 0
-                }
-            }
+            # Получаем текущую цену
+            current_price = all_data['5m'][0].iloc[-1]['close'] if len(all_data['5m']) > 0 else 0
             
-            # Decision making
-            if current_confidence >= threshold:
-                # Calculate position size dynamically (using AnalysisContext)
-                current_price = all_data['5m'][0].iloc[-1]['close'] if len(all_data['5m']) > 0 else 0
-                
-                position_info = position_sizer.calculate(
-                    current_confidence,
-                    context,  # Pass full context with lineage and results
-                    current_price
-                )
-                
-                signal_data['decision'] = 'OPEN'
-                signal_data['position'] = position_info
-                signal_data['weights_used'] = optimized_weights  # Store for snapshot
-                
-                logger.info(f"[CYCLE_{cycle_count}] SIGNAL: OPEN | Confidence: {current_confidence:.3f} >= {threshold:.3f}")
-                logger.info(f"Position: {position_info['position_pct']}% | SL: {position_info['sl_pct']}% | TP R/R: {position_info['rr_ratio']}")
-                logger.info(f"SL Reasoning: ATR({position_info['reasoning']['atr_source']})={position_info['reasoning']['atr_pct']:.2f}% | Regime: {position_info['reasoning']['regime_adjustment']} | Patterns: {position_info['reasoning']['pattern_adjustment']}")
-                logger.info(f"Data Quality Factor: {position_info['reasoning']['data_quality_factor']:.2f} | Details: {position_info['reasoning']['quality_details']}")
-                
-                # Create initial trade snapshot for Autotuner tracking
-                analyzer_results = {
-                    'btc': btc_result,
-                    'fractal': fractal_result,
-                    'orderbook': orderbook_result,
-                    'pattern': pattern_result,
-                    'regime': regime_result
-                }
-                trade_snapshot = shadow.create_trade_snapshot(
-                    trade_info={
-                        'trade_id': f"live_{cycle_count}",
-                        'symbol': symbol,
-                        'side': 'BUY',  # Simplified, should come from signal direction
-                        'entry_price': current_price,
-                        'sl_percent': position_info['sl_pct'],
-                        'tp_percent': position_info.get('tp_pct', 2.0),
-                        'position_size': position_info['position_pct'],
-                        'confidence': current_confidence,
-                        'reasoning': position_info['reasoning']  # Store full reasoning
+            # === УПРАВЛЕНИЕ АКТИВНЫМИ ПОЗИЦИЯМИ ===
+            if position_manager.get_active_count() > 0:
+                # Обновляем цены в активных позициях
+                for trade_id in list(position_manager.active_positions.keys()):
+                    position_manager.update_price(trade_id, current_price)
+                    pos = position_manager.active_positions[trade_id]
+                    
+                    # Проверяем выход по SL
+                    if pos['side'] == 'BUY' and current_price <= pos['sl_price']:
+                        logger.info(f"[CYCLE_{cycle_count}] CLOSE POSITION {trade_id}: Stop Loss hit at {current_price}")
+                        pnl_pct = (current_price - pos['entry_price']) / pos['entry_price'] * 100
+                        pnl_usdt = pnl_pct * pos['position_pct'] * config.getfloat('GENERAL', 'initial_balance') / 100
+                        
+                        # Обновляем snapshot и записываем в Autotuner
+                        snapshot = position_manager.position_snapshots[trade_id]
+                        snapshot.exit_price = current_price
+                        snapshot.exit_reason = 'SL'
+                        snapshot.pnl_percent = pnl_pct
+                        snapshot.pnl_usdt = pnl_usdt
+                        snapshot.is_winner = pnl_pct > 0
+                        
+                        autotuner.record_trade_outcome(snapshot)
+                        position_manager.remove_position(trade_id)
+                        continue
+                    
+                    # Проверяем выход по TP
+                    if pos['side'] == 'BUY' and current_price >= pos['tp_price']:
+                        logger.info(f"[CYCLE_{cycle_count}] CLOSE POSITION {trade_id}: Take Profit hit at {current_price}")
+                        pnl_pct = (current_price - pos['entry_price']) / pos['entry_price'] * 100
+                        pnl_usdt = pnl_pct * pos['position_pct'] * config.getfloat('GENERAL', 'initial_balance') / 100
+                        
+                        snapshot = position_manager.position_snapshots[trade_id]
+                        snapshot.exit_price = current_price
+                        snapshot.exit_reason = 'TP'
+                        snapshot.pnl_percent = pnl_pct
+                        snapshot.pnl_usdt = pnl_usdt
+                        snapshot.is_winner = True
+                        
+                        autotuner.record_trade_outcome(snapshot)
+                        position_manager.remove_position(trade_id)
+                        continue
+                    
+                    # Проверяем trailing stop
+                    if pos['side'] == 'BUY':
+                        atr = analysis.get('5m', {}).get('atr', 0)
+                        trail_result = trailing.calculate_trail(
+                            entry_price=pos['entry_price'],
+                            current_price=current_price,
+                            atr=atr,
+                            high_since_entry=pos['high_since_entry'],
+                            context=context
+                        )
+                        
+                        if trail_result and current_price <= trail_result['trail_price']:
+                            logger.info(f"[CYCLE_{cycle_count}] CLOSE POSITION {trade_id}: Trailing Stop at {trail_result['trail_price']}")
+                            pnl_pct = (current_price - pos['entry_price']) / pos['entry_price'] * 100
+                            pnl_usdt = pnl_pct * pos['position_pct'] * config.getfloat('GENERAL', 'initial_balance') / 100
+                            
+                            snapshot = position_manager.position_snapshots[trade_id]
+                            snapshot.exit_price = current_price
+                            snapshot.exit_reason = 'TRAILING'
+                            snapshot.pnl_percent = pnl_pct
+                            snapshot.pnl_usdt = pnl_usdt
+                            snapshot.is_winner = pnl_pct > 0
+                            
+                            autotuner.record_trade_outcome(snapshot)
+                            position_manager.remove_position(trade_id)
+            
+            # === НОВЫЕ СИГНАЛЫ (только если нет активных позиций) ===
+            if position_manager.get_active_count() == 0:
+                # Prepare signal data
+                signal_data = {
+                    'timestamp': cycle_start.isoformat(),
+                    'cycle': cycle_count,
+                    'confidence': current_confidence,
+                    'threshold': threshold,
+                    'analysis': analysis,
+                    'prices': {
+                        'current': current_price
                     },
-                    analyzer_results=analyzer_results,
-                    weights=optimized_weights
-                )
-                # Store snapshot in context for later update when trade closes
-                context.active_trade_snapshot = trade_snapshot
+                    'lineage_summary': {
+                        'avg_confidence': score_lineage.confidence if score_lineage else 0,
+                        'min_confidence': min(lg.confidence for lg in confidence_result.get('component_lineages', {}).values()) if confidence_result.get('component_lineages') else 0
+                    }
+                }
                 
-                # Execute trade (placeholder - will integrate with real execution)
-                # await binance.execute_trade(...)
+                # Decision making
+                if current_confidence >= threshold:
+                    # Calculate position size dynamically
+                    position_info = position_sizer.calculate(
+                        current_confidence,
+                        context,
+                        current_price
+                    )
+                    
+                    signal_data['decision'] = 'OPEN'
+                    signal_data['position'] = position_info
+                    signal_data['weights_used'] = optimized_weights
+                    
+                    logger.info(f"[CYCLE_{cycle_count}] SIGNAL: OPEN | Confidence: {current_confidence:.3f} >= {threshold:.3f}")
+                    logger.info(f"Position: {position_info['position_pct']}% | SL: {position_info['sl_pct']}% | TP R/R: {position_info['rr_ratio']}")
+                    logger.info(f"SL Reasoning: ATR({position_info['reasoning']['atr_source']})={position_info['reasoning']['atr_pct']:.2f}% | Regime: {position_info['reasoning']['regime_adjustment']} | Patterns: {position_info['reasoning']['pattern_adjustment']}")
+                    logger.info(f"Data Quality Factor: {position_info['reasoning']['data_quality_factor']:.2f} | Details: {position_info['reasoning']['quality_details']}")
+                    
+                    # Create trade snapshot for Autotuner tracking
+                    analyzer_results = {
+                        'btc': btc_result,
+                        'fractal': fractal_result,
+                        'orderbook': orderbook_result,
+                        'pattern': pattern_result,
+                        'regime': regime_result
+                    }
+                    trade_snapshot = shadow.create_trade_snapshot(
+                        trade_info={
+                            'trade_id': f"live_{cycle_count}",
+                            'symbol': symbol,
+                            'side': 'BUY',
+                            'entry_price': current_price,
+                            'sl_percent': position_info['sl_pct'],
+                            'tp_percent': position_info.get('tp_pct', 2.0),
+                            'position_size': position_info['position_pct'],
+                            'confidence': current_confidence,
+                            'reasoning': position_info['reasoning']
+                        },
+                        analyzer_results=analyzer_results,
+                        weights=optimized_weights
+                    )
+                    
+                    # Сохраняем как TradeContextSnapshot для Autotuner
+                    snapshot_obj = TradeContextSnapshot(
+                        trade_id=f"live_{cycle_count}",
+                        timestamp=datetime.now().timestamp(),
+                        symbol=symbol,
+                        side='BUY',
+                        btc_correlation=analyzer_results['btc'].get('correlation', 0),
+                        btc_confidence=analyzer_results['btc'].get('confidence', 0),
+                        fractal_score=analyzer_results['fractal'].get('score', 0),
+                        orderbook_score=analyzer_results['orderbook'].get('score', 0),
+                        pattern_score=analyzer_results['pattern'].get('signal', 0),
+                        regime_score=analyzer_results['regime'].get('score', 0),
+                        regime_type=analyzer_results['regime'].get('regime', 'UNKNOWN'),
+                        weights_used=optimized_weights,
+                        entry_price=current_price,
+                        sl_percent=position_info['sl_pct'],
+                        tp_percent=position_info.get('tp_pct', 2.0),
+                        position_size=position_info['position_pct'],
+                        final_confidence=current_confidence,
+                        exit_price=None,
+                        exit_reason=None,
+                        pnl_percent=0.0,
+                        pnl_usdt=0.0,
+                        is_winner=False,
+                        max_drawdown_during_trade=0.0,
+                        max_profit_during_trade=0.0
+                    )
+                    
+                    # Добавляем позицию в менеджер
+                    position_manager.add_position(
+                        f"live_{cycle_count}",
+                        {
+                            'entry_price': current_price,
+                            'side': 'BUY',
+                            'sl_price': position_info['sl_price'],
+                            'tp_price': position_info['tp_price'],
+                            'position_pct': position_info['position_pct']
+                        },
+                        snapshot_obj
+                    )
+                    
+                    # TODO: Execute real trade via Binance API
+                    # await binance.place_order(side='BUY', quantity=..., price=current_price)
+                    
+                else:
+                    signal_data['decision'] = 'HOLD'
+                    signal_data['reason'] = f'Low confidence: {current_confidence:.2f} < {threshold:.2f}'
+                    
+                    logger.info(f"[CYCLE_{cycle_count}] HOLD | Confidence: {current_confidence:.3f} < {threshold:.3f}")
+                    
+                    # Shadow calculation for forbidden trades
+                    if config.getboolean('SHADOW', 'save_forbidden_trades'):
+                        shadow_result = shadow.analyze_forbidden_trade(signal_data, context_snapshot=context.to_dict() if hasattr(context, 'to_dict') else None)
+                        logger.debug(f"Shadow analysis saved for forbidden trade")
                 
-            else:
-                signal_data['decision'] = 'HOLD'
-                signal_data['reason'] = f'Low confidence: {current_confidence:.2f} < {threshold:.2f}'
-                
-                logger.info(f"[CYCLE_{cycle_count}] HOLD | Confidence: {current_confidence:.3f} < {threshold:.3f}")
-                
-                # Shadow calculation for forbidden trades
-                if config.getboolean('SHADOW', 'save_forbidden_trades'):
-                    shadow_result = shadow.analyze_forbidden_trade(signal_data, context_snapshot=context.to_dict() if hasattr(context, 'to_dict') else None)
-                    logger.debug(f"Shadow analysis saved for forbidden trade")
-            
-            # Log signal to database
-            db.log_signal(signal_data)
+                # Log signal to database
+                db.log_signal(signal_data)
             
             # Run shadow tests
             if config.getboolean('SHADOW', 'enabled'):
                 shadow.run_tests(all_data, analysis, current_confidence)
             
-            # Periodic Autotuner optimization (every 10 cycles or when trade closes)
+            # Periodic Autotuner optimization (every 10 cycles)
             if cycle_count % 10 == 0:
                 logger.info("Running Autotuner optimization...")
                 new_weights = autotuner.analyze_and_optimize()
@@ -214,12 +374,12 @@ async def main():
             # Generate report every 5 minutes
             if (datetime.now() - last_report_time).seconds >= 300:
                 report = reporter.generate_report()
-                logger.info("\n" + "="*60)
+                logger.info("\\n" + "="*60)
                 logger.info("PERIODIC REPORT")
                 logger.info("="*60)
                 for key, value in report.items():
                     logger.info(f"{key}: {value}")
-                logger.info("="*60 + "\n")
+                logger.info("="*60 + "\\n")
                 last_report_time = datetime.now()
             
             # Wait for next cycle
@@ -232,7 +392,7 @@ async def main():
     finally:
         # Final report
         final_report = reporter.generate_report()
-        logger.info("\n" + "="*60)
+        logger.info("\\n" + "="*60)
         logger.info("FINAL SESSION REPORT")
         logger.info("="*60)
         for key, value in final_report.items():
@@ -242,6 +402,7 @@ async def main():
         db.close()
         await binance.close()
         logger.info("TENBID shutdown complete")
+
 
 if __name__ == '__main__':
     asyncio.run(main())
