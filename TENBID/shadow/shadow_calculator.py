@@ -116,10 +116,10 @@ class ShadowCalculator:
             # Analyzer Scores at entry
             'btc_correlation': analyzer_results.get('btc', {}).get('correlation', 0.0),
             'btc_confidence': analyzer_results.get('btc', {}).get('confidence', 0.0),
-            'fractal_score': analyzer_results.get('fractal', {}).get('score', 0.0),
-            'orderbook_score': analyzer_results.get('orderbook', {}).get('score', 0.0),
-            'pattern_score': analyzer_results.get('pattern', {}).get('score', 0.0),
-            'regime_score': analyzer_results.get('regime', {}).get('score', 0.0),
+            'fractal_score': analyzer_results.get('fractal', {}).get('confidence', 0.0),
+            'orderbook_score': analyzer_results.get('orderbook', {}).get('confidence', 0.0),
+            'pattern_score': analyzer_results.get('pattern', {}).get('confidence', 0.0),
+            'regime_score': analyzer_results.get('regime', {}).get('confidence', 0.0),
             'regime_type': analyzer_results.get('regime', {}).get('type', 'UNKNOWN'),
             
             # System Weights used
