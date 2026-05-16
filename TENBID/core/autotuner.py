@@ -46,15 +46,19 @@ class TradeContextSnapshot:
     final_confidence: float
     
     # Outcome
-    exit_price: Optional[float]
-    exit_reason: Optional[str]  # 'TP', 'SL', 'MANUAL', 'TRAILING'
-    pnl_percent: float
-    pnl_usdt: float
-    is_winner: bool
+    exit_price: Optional[float] = None
+    exit_reason: Optional[str] = None  # 'TP', 'SL', 'MANUAL', 'TRAILING'
+    pnl_percent: float = 0.0
+    pnl_usdt: float = 0.0
+    is_winner: bool = False
+    
+    # Shadow trade tracking
+    is_shadow: bool = False
+    shadow_reason: Optional[str] = None  # 'LOW_CONFIDENCE', 'RISK_LIMIT', 'SHADOW_TEST'
     
     # Market Context at Exit
-    max_drawdown_during_trade: float
-    max_profit_during_trade: float
+    max_drawdown_during_trade: float = 0.0
+    max_profit_during_trade: float = 0.0
 
 class Autotuner:
     def __init__(self, db_path: str = "trade_history.db"):
@@ -97,7 +101,7 @@ class Autotuner:
         }
 
     def record_trade_outcome(self, snapshot: TradeContextSnapshot):
-        """Save a completed trade context for future analysis."""
+        """Save a completed trade context for future analysis (real and shadow trades)."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
@@ -108,18 +112,21 @@ class Autotuner:
                     pattern_score, regime_score, regime_type,
                     weights_used_json, sl_percent, position_size,
                     pnl_percent, pnl_usdt, is_winner, exit_reason,
-                    max_drawdown_during_trade, max_profit_during_trade
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    max_drawdown_during_trade, max_profit_during_trade,
+                    is_shadow, shadow_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 snapshot.trade_id, snapshot.timestamp, snapshot.symbol, snapshot.side,
                 snapshot.btc_correlation, snapshot.btc_confidence, snapshot.fractal_score, snapshot.orderbook_score,
                 snapshot.pattern_score, snapshot.regime_score, snapshot.regime_type,
                 json.dumps(snapshot.weights_used), snapshot.sl_percent, snapshot.position_size,
                 snapshot.pnl_percent, snapshot.pnl_usdt, int(snapshot.is_winner), snapshot.exit_reason,
-                snapshot.max_drawdown_during_trade, snapshot.max_profit_during_trade
+                snapshot.max_drawdown_during_trade, snapshot.max_profit_during_trade,
+                int(snapshot.is_shadow), snapshot.shadow_reason
             ))
             conn.commit()
-            logger.debug(f"Recorded trade outcome for analysis: {snapshot.trade_id} (PnL: {snapshot.pnl_percent}%)")
+            trade_type = "SHADOW" if snapshot.is_shadow else "REAL"
+            logger.debug(f"Recorded {trade_type} trade outcome for analysis: {snapshot.trade_id} (PnL: {snapshot.pnl_percent}%)")
         except Exception as e:
             logger.error(f"Failed to record trade outcome: {e}")
         finally:
@@ -180,18 +187,30 @@ class Autotuner:
 
     def _calculate_optimal_weights(self, history: List[TradeContextSnapshot]) -> Dict[str, float]:
         """
-        Heuristic optimization algorithm.
-        Compares weighted scores of winners vs losers.
-        """
-        winners = [t for t in history if t.is_winner]
-        losers = [t for t in history if not t.is_winner]
+        Heuristic optimization algorithm using both real and shadow trades.
+        Compares weighted scores of winners vs losers, and evaluates shadow trade quality.
         
-        if not winners or not losers:
+        Shadow trades analysis:
+        - Prevented losses: shadow trades that would have lost money (good decision to skip)
+        - Missed profits: shadow trades that would have won (opportunity cost)
+        """
+        # Separate real and shadow trades
+        real_trades = [t for t in history if not t.is_shadow]
+        shadow_trades = [t for t in history if t.is_shadow]
+        
+        winners = [t for t in real_trades if t.is_winner]
+        losers = [t for t in real_trades if not t.is_winner]
+        
+        # Analyze shadow trades for quality assessment
+        shadow_prevented_losses = [t for t in shadow_trades if not t.is_winner]  # Good: we avoided a loss
+        shadow_missed_wins = [t for t in shadow_trades if t.is_winner]  # Bad: we missed a profit
+        
+        if not winners and not losers:
             return self.current_weights
 
-        # 1. Analyze Signal Strength Differences
-        avg_winner_scores = self._avg_scores(winners)
-        avg_loser_scores = self._avg_scores(losers)
+        # 1. Analyze Signal Strength Differences (Real Trades)
+        avg_winner_scores = self._avg_scores(winners) if winners else {}
+        avg_loser_scores = self._avg_scores(losers) if losers else {}
         
         new_weights = self.current_weights.copy()
         
@@ -205,8 +224,24 @@ class Autotuner:
                 new_weights[key.replace('_score', '')] = current_w * 1.05
             elif w_diff < -0.1:
                 new_weights[key.replace('_score', '')] = current_w * 0.95
-                
-        # 2. Analyze SL Failures (The "5% SL" problem)
+        
+        # 2. Shadow Trade Quality Analysis
+        if shadow_trades:
+            shadow_quality_score = len(shadow_prevented_losses) / len(shadow_trades) if shadow_trades else 0
+            
+            # If shadow trades show we're avoiding many losses, our confidence thresholds are good
+            if shadow_quality_score > 0.6:
+                logger.info(f"Shadow analysis: {shadow_quality_score*100:.1f}% of skipped trades would have lost. Threshold strategy is effective.")
+                # Slightly increase regime weight - our filtering is working
+                new_weights['regime'] = min(3.0, new_weights.get('regime', 2.0) * 1.02)
+            
+            # If we're missing too many wins, maybe we're too conservative
+            if len(shadow_missed_wins) > len(shadow_prevented_losses):
+                logger.info(f"Shadow analysis: Missing more wins than preventing losses. Consider lowering thresholds.")
+                # Slightly reduce sl_aggressiveness to allow more trades
+                new_weights['sl_aggressiveness'] = max(0.2, new_weights.get('sl_aggressiveness', 1.0) * 0.98)
+        
+        # 3. Analyze SL Failures (The "5% SL" problem)
         # Check losers where max_profit_during_trade was positive but hit SL
         false_breakouts = [t for t in losers if t.max_profit_during_trade > 1.0 and t.exit_reason == 'SL']
         if len(false_breakouts) > len(losers) * 0.3: # If 30% of losses were wick-outs
@@ -214,9 +249,12 @@ class Autotuner:
             new_weights['sl_aggressiveness'] *= 0.9  # Make SL wider
             new_weights['size_confidence'] *= 0.95   # Reduce size slightly to compensate risk
 
-        # 3. Regime Specific Tuning
+        # 4. Regime Specific Tuning
         # If we lose often in 'RANGING', reduce weight of Trend indicators in ranging markets
-        # (Simplified here, ideally would be a matrix of weights per regime)
+        regime_losers = [t for t in losers if t.regime_type == 'RANGING']
+        if len(regime_losers) > len(losers) * 0.4:
+            logger.info("High loss rate in RANGING regime. Reducing trend indicator weights.")
+            new_weights['trend'] = max(0.5, new_weights.get('trend', 1.0) * 0.9)
         
         # Clamp weights to reasonable bounds
         for k in new_weights:
@@ -290,7 +328,9 @@ def init_autotuner_db(db_path: str = "trade_history.db"):
         is_winner INTEGER,
         exit_reason TEXT,
         max_drawdown_during_trade REAL,
-        max_profit_during_trade REAL
+        max_profit_during_trade REAL,
+        is_shadow INTEGER DEFAULT 0,
+        shadow_reason TEXT
     )
     """)
     

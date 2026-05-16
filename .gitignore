@@ -1,57 +1,36 @@
-```
-# Python
-__pycache__/
+```gitignore
+# Compiled Python files
 *.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
+__pycache__/
+
+# Dependencies
 .venv/
-.ENV
-.ENV.local
-.env
-.env.local
-.env.*
-.env.local.*
-.env.vault
-.python-version
-.pytest_cache/
-.mypy_cache/
-.coverage
-coverage/
-htmlcov/
-.hypothesis/
+venv/
+node_modules/
 
 # Build artifacts
-build/
 dist/
-*.egg
+build/
 *.egg-info/
-.installed.cfg
-*.egg-info/
-*.so
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-Icon?
-.directory
-.fseventsd
-.svn/
 
 # Logs
 *.log
 
-# IDE
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Python cache
+.mypy_cache/
+.pytest_cache/
 ```
