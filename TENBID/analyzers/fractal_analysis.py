@@ -27,7 +27,8 @@ class FractalAnalyzer:
                     quality=DataQuality.VERY_LOW,
                     metadata={'error': 'No data available'}
                 )
-                return {"error": "No data available", "confidence": 0.0, "lineage": lineage}
+                # Fallback: нейтральная оценка вместо 0.0 чтобы не убивать confidence
+                return {"error": "No data available", "confidence": 0.5, "lineage": lineage}
 
             # 1. Расчет классических фракталов Вильямса (5 свечей)
             fractals = self._calculate_williams_fractals(df)
@@ -39,9 +40,10 @@ class FractalAnalyzer:
                     quality=DataQuality.LOW,
                     metadata={'status': 'NO_FRACTALS'}
                 )
+                # Fallback: нейтральная оценка вместо 0.0 чтобы не убивать confidence
                 return {
                     "status": "NO_FRACTALS",
-                    "confidence": 0.0,
+                    "confidence": 0.5,
                     "lineage": lineage
                 }
 
@@ -99,9 +101,10 @@ class FractalAnalyzer:
                 quality=DataQuality.VERY_LOW,
                 metadata={'error': str(e)}
             )
+            # Fallback: нейтральная оценка вместо 0.0 чтобы не убивать confidence
             return {
                 "error": str(e),
-                "confidence": 0.0,
+                "confidence": 0.5,
                 "lineage": lineage
             }
 
