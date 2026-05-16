@@ -70,8 +70,26 @@ class HistoryDB:
     def log_signal(self, signal_data):
         cursor = self.conn.cursor()
         
-        analysis_json = json.dumps(signal_data.get('analysis', {}))
-        shadow_json = json.dumps(signal_data.get('shadow_result', {}))
+        # Очистка данных от не-JSON-сериализуемых объектов (DataLineage и др.)
+        def clean_for_json(obj):
+            if isinstance(obj, dict):
+                return {k: clean_for_json(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [clean_for_json(v) for v in obj]
+            elif hasattr(obj, '__dict__'):
+                # Для объектов классов (например DataLineage) - конвертируем в строку
+                return str(obj)
+            else:
+                return obj
+        
+        analysis_raw = signal_data.get('analysis', {})
+        shadow_raw = signal_data.get('shadow_result', {})
+        
+        analysis_clean = clean_for_json(analysis_raw)
+        shadow_clean = clean_for_json(shadow_raw)
+        
+        analysis_json = json.dumps(analysis_clean)
+        shadow_json = json.dumps(shadow_clean)
         
         cursor.execute('''
             INSERT INTO signals (

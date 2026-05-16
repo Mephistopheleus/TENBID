@@ -88,7 +88,11 @@ class ShadowCalculator:
         elif test_type == 'volume_profile':
             # Test volume profile analysis (placeholder)
             test_data['parameters'] = {'profile_periods': 50}
-            test_data['result'] = {'poc_level': data_dict.get('5m', {}).iloc[-1]['close'] if len(data_dict.get('5m', [])) > 0 else 0}
+            df_5m = data_dict.get('5m', {})
+            if hasattr(df_5m, 'iloc') and len(df_5m) > 0:
+                test_data['result'] = {'poc_level': df_5m.iloc[-1]['close']}
+            else:
+                test_data['result'] = {'poc_level': 0}
         
         return test_data
 

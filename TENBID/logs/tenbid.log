@@ -913,3 +913,205 @@ sqlite3.OperationalError: attempt to write a readonly database
 2026-05-14 13:19:35 | DEBUG    | Shadow analysis saved for forbidden trade
 2026-05-14 13:19:48 | INFO     | [CYCLE_165] HOLD | Confidence: 0.590 < 0.719
 2026-05-14 13:19:48 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:25:51 | INFO     | ============================================================
+2026-05-16 11:25:51 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-16 11:25:51 | INFO     | Mode: TESTNET
+2026-05-16 11:25:51 | INFO     | Symbol: DOGEUSDT
+2026-05-16 11:25:51 | INFO     | Initial Balance: 200.0 USDT
+2026-05-16 11:25:51 | INFO     | ============================================================
+2026-05-16 11:25:52 | INFO     | Connected to Binance API
+2026-05-16 11:25:52 | INFO     | Warming up with 300 candles...
+2026-05-16 11:25:52 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-16 11:25:52 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-16 11:25:52 | ERROR    | Critical error: 0.7999999999999999 is not a valid DataQuality
+Traceback (most recent call last):
+  File "/workspace/TENBID/main.py", line 138, in main
+    analysis = market_analyzer.analyze(all_data)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/TENBID/analyzers/market_analyzer.py", line 103, in analyze
+    merged_lineage = LineageTracker.merge_lineages(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/TENBID/core/data_lineage.py", line 279, in merge_lineages
+    quality = DataQuality(min(1.0, avg_quality + 0.1))  # Небольшой бонус за агрегацию
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/enum.py", line 751, in __call__
+    return cls.__new__(cls, value)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/enum.py", line 1170, in __new__
+    raise ve_exc
+ValueError: 0.7999999999999999 is not a valid DataQuality
+2026-05-16 11:25:52 | INFO     | \n============================================================
+2026-05-16 11:25:52 | INFO     | FINAL SESSION REPORT
+2026-05-16 11:25:52 | INFO     | ============================================================
+2026-05-16 11:25:52 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 11:25:52 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 11:25:52 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 11:25:52 | INFO     | Total Signals: 0
+2026-05-16 11:25:52 | INFO     | Open Decisions: 0
+2026-05-16 11:25:52 | INFO     | Hold Decisions: 0
+2026-05-16 11:25:52 | INFO     | Total Trades: 0
+2026-05-16 11:25:52 | INFO     | Winning Trades: 0
+2026-05-16 11:25:52 | INFO     | Losing Trades: 0
+2026-05-16 11:25:52 | INFO     | Winrate: 0.0%
+2026-05-16 11:25:52 | INFO     | Shadow Winrate: 0.0%
+2026-05-16 11:25:52 | INFO     | Avg Trade PnL: N/A
+2026-05-16 11:25:52 | INFO     | ============================================================
+2026-05-16 11:25:52 | INFO     | TENBID shutdown complete
+2026-05-16 11:26:53 | INFO     | ============================================================
+2026-05-16 11:26:53 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-16 11:26:53 | INFO     | Mode: TESTNET
+2026-05-16 11:26:53 | INFO     | Symbol: DOGEUSDT
+2026-05-16 11:26:53 | INFO     | Initial Balance: 200.0 USDT
+2026-05-16 11:26:53 | INFO     | ============================================================
+2026-05-16 11:26:53 | INFO     | Connected to Binance API
+2026-05-16 11:26:53 | INFO     | Warming up with 300 candles...
+2026-05-16 11:26:53 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-16 11:26:53 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-16 11:26:53 | ERROR    | Critical error: 0.7999999999999999 is not a valid DataQuality
+Traceback (most recent call last):
+  File "/workspace/TENBID/main.py", line 138, in main
+    analysis = market_analyzer.analyze(all_data)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/TENBID/analyzers/market_analyzer.py", line 103, in analyze
+    merged_lineage = LineageTracker.merge_lineages(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/TENBID/core/data_lineage.py", line 279, in merge_lineages
+    quality = DataQuality(min(1.0, avg_quality + 0.1))  # Небольшой бонус за агрегацию
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/enum.py", line 751, in __call__
+    return cls.__new__(cls, value)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/enum.py", line 1170, in __new__
+    raise ve_exc
+ValueError: 0.7999999999999999 is not a valid DataQuality
+2026-05-16 11:26:53 | INFO     | \n============================================================
+2026-05-16 11:26:53 | INFO     | FINAL SESSION REPORT
+2026-05-16 11:26:53 | INFO     | ============================================================
+2026-05-16 11:26:53 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 11:26:53 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 11:26:53 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 11:26:53 | INFO     | Total Signals: 0
+2026-05-16 11:26:53 | INFO     | Open Decisions: 0
+2026-05-16 11:26:53 | INFO     | Hold Decisions: 0
+2026-05-16 11:26:53 | INFO     | Total Trades: 0
+2026-05-16 11:26:53 | INFO     | Winning Trades: 0
+2026-05-16 11:26:53 | INFO     | Losing Trades: 0
+2026-05-16 11:26:53 | INFO     | Winrate: 0.0%
+2026-05-16 11:26:53 | INFO     | Shadow Winrate: 0.0%
+2026-05-16 11:26:53 | INFO     | Avg Trade PnL: N/A
+2026-05-16 11:26:53 | INFO     | ============================================================
+2026-05-16 11:26:53 | INFO     | TENBID shutdown complete
+2026-05-16 11:27:11 | INFO     | ============================================================
+2026-05-16 11:27:11 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-16 11:27:11 | INFO     | Mode: TESTNET
+2026-05-16 11:27:11 | INFO     | Symbol: DOGEUSDT
+2026-05-16 11:27:11 | INFO     | Initial Balance: 200.0 USDT
+2026-05-16 11:27:11 | INFO     | ============================================================
+2026-05-16 11:27:11 | INFO     | Connected to Binance API
+2026-05-16 11:27:11 | INFO     | Warming up with 300 candles...
+2026-05-16 11:27:11 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-16 11:27:11 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-16 11:27:11 | INFO     | [CYCLE_1] HOLD | Confidence: 0.481 < 0.715
+2026-05-16 11:27:11 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:27:11 | ERROR    | Critical error: Object of type DataLineage is not JSON serializable
+Traceback (most recent call last):
+  File "/workspace/TENBID/main.py", line 366, in main
+    db.log_signal(signal_data)
+  File "/workspace/TENBID/core/history_db.py", line 73, in log_signal
+    analysis_json = json.dumps(signal_data.get('analysis', {}))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/json/__init__.py", line 231, in dumps
+    return _default_encoder.encode(obj)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/json/encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/json/encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/json/encoder.py", line 180, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+TypeError: Object of type DataLineage is not JSON serializable
+2026-05-16 11:27:11 | INFO     | \n============================================================
+2026-05-16 11:27:11 | INFO     | FINAL SESSION REPORT
+2026-05-16 11:27:11 | INFO     | ============================================================
+2026-05-16 11:27:11 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 11:27:11 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 11:27:11 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 11:27:11 | INFO     | Total Signals: 0
+2026-05-16 11:27:11 | INFO     | Open Decisions: 0
+2026-05-16 11:27:11 | INFO     | Hold Decisions: 0
+2026-05-16 11:27:11 | INFO     | Total Trades: 0
+2026-05-16 11:27:11 | INFO     | Winning Trades: 0
+2026-05-16 11:27:11 | INFO     | Losing Trades: 0
+2026-05-16 11:27:11 | INFO     | Winrate: 0.0%
+2026-05-16 11:27:11 | INFO     | Shadow Winrate: 0.0%
+2026-05-16 11:27:11 | INFO     | Avg Trade PnL: N/A
+2026-05-16 11:27:11 | INFO     | ============================================================
+2026-05-16 11:27:11 | INFO     | TENBID shutdown complete
+2026-05-16 11:28:09 | INFO     | ============================================================
+2026-05-16 11:28:09 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-16 11:28:09 | INFO     | Mode: TESTNET
+2026-05-16 11:28:09 | INFO     | Symbol: DOGEUSDT
+2026-05-16 11:28:09 | INFO     | Initial Balance: 200.0 USDT
+2026-05-16 11:28:09 | INFO     | ============================================================
+2026-05-16 11:28:09 | INFO     | Connected to Binance API
+2026-05-16 11:28:09 | INFO     | Warming up with 300 candles...
+2026-05-16 11:28:09 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-16 11:28:09 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-16 11:28:09 | INFO     | [CYCLE_1] HOLD | Confidence: 0.482 < 0.715
+2026-05-16 11:28:09 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:28:09 | ERROR    | Critical error: 'tuple' object has no attribute 'iloc'
+Traceback (most recent call last):
+  File "/workspace/TENBID/main.py", line 370, in main
+    shadow.run_tests(all_data, analysis, current_confidence)
+  File "/workspace/TENBID/shadow/shadow_calculator.py", line 48, in run_tests
+    result = self._run_single_test(test_type, data_dict, analysis, current_confidence)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/TENBID/shadow/shadow_calculator.py", line 91, in _run_single_test
+    test_data['result'] = {'poc_level': data_dict.get('5m', {}).iloc[-1]['close'] if len(data_dict.get('5m', [])) > 0 else 0}
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'tuple' object has no attribute 'iloc'
+2026-05-16 11:28:09 | INFO     | \n============================================================
+2026-05-16 11:28:09 | INFO     | FINAL SESSION REPORT
+2026-05-16 11:28:09 | INFO     | ============================================================
+2026-05-16 11:28:09 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 11:28:09 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 11:28:09 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 11:28:09 | INFO     | Total Signals: 1
+2026-05-16 11:28:09 | INFO     | Open Decisions: 0
+2026-05-16 11:28:09 | INFO     | Hold Decisions: 1
+2026-05-16 11:28:09 | INFO     | Total Trades: 0
+2026-05-16 11:28:09 | INFO     | Winning Trades: 0
+2026-05-16 11:28:09 | INFO     | Losing Trades: 0
+2026-05-16 11:28:09 | INFO     | Winrate: 0.0%
+2026-05-16 11:28:09 | INFO     | Shadow Winrate: 0.0%
+2026-05-16 11:28:09 | INFO     | Avg Trade PnL: N/A
+2026-05-16 11:28:09 | INFO     | ============================================================
+2026-05-16 11:28:09 | INFO     | TENBID shutdown complete
+2026-05-16 11:28:25 | INFO     | ============================================================
+2026-05-16 11:28:25 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-16 11:28:25 | INFO     | Mode: TESTNET
+2026-05-16 11:28:25 | INFO     | Symbol: DOGEUSDT
+2026-05-16 11:28:25 | INFO     | Initial Balance: 200.0 USDT
+2026-05-16 11:28:25 | INFO     | ============================================================
+2026-05-16 11:28:25 | INFO     | Connected to Binance API
+2026-05-16 11:28:25 | INFO     | Warming up with 300 candles...
+2026-05-16 11:28:25 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-16 11:28:25 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-16 11:28:25 | INFO     | [CYCLE_1] HOLD | Confidence: 0.482 < 0.716
+2026-05-16 11:28:25 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:28:55 | INFO     | [CYCLE_2] HOLD | Confidence: 0.482 < 0.716
+2026-05-16 11:28:55 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:29:28 | INFO     | ============================================================
+2026-05-16 11:29:28 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-16 11:29:28 | INFO     | Mode: TESTNET
+2026-05-16 11:29:28 | INFO     | Symbol: DOGEUSDT
+2026-05-16 11:29:28 | INFO     | Initial Balance: 200.0 USDT
+2026-05-16 11:29:28 | INFO     | ============================================================
+2026-05-16 11:29:28 | INFO     | Connected to Binance API
+2026-05-16 11:29:28 | INFO     | Warming up with 300 candles...
+2026-05-16 11:29:28 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-16 11:29:28 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-16 11:29:29 | INFO     | [CYCLE_1] HOLD | Confidence: 0.483 < 0.716
+2026-05-16 11:29:29 | DEBUG    | Shadow analysis saved for forbidden trade

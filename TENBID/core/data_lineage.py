@@ -276,7 +276,10 @@ class LineageTracker:
         
         # Средняя kualitas зависит от всех зависимостей
         avg_quality = sum(lg.quality.value for lg in lineages) / len(lineages)
-        quality = DataQuality(min(1.0, avg_quality + 0.1))  # Небольшой бонус за агрегацию
+        boosted_quality = min(1.0, avg_quality + 0.1)  # Небольшой бонус за агрегацию
+        
+        # Выбираем ближайшее допустимое значение DataQuality
+        quality = min(DataQuality, key=lambda q: abs(q.value - boosted_quality), default=DataQuality.MEDIUM)
         
         return DataLineage(
             source=DataSource.CALCULATED,
