@@ -1,0 +1,50 @@
+nohup: ignoring input
+OpenBLAS WARNING - could not determine the L2 cache size on this system, assuming 256k
+2026-05-14 13:19:04 | INFO     | ============================================================
+2026-05-14 13:19:04 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-14 13:19:04 | INFO     | Mode: TESTNET
+2026-05-14 13:19:04 | INFO     | Symbol: DOGEUSDT
+2026-05-14 13:19:04 | INFO     | Initial Balance: 200.0 USDT
+2026-05-14 13:19:04 | INFO     | ============================================================
+2026-05-14 13:19:04 | INFO     | Connected to Binance API
+2026-05-14 13:19:04 | INFO     | Warming up with 300 candles...
+2026-05-14 13:19:05 | INFO     | Loaded 300 base candles
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+2026-05-14 13:19:05 | INFO     | Built 7 synthetic timeframes
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+2026-05-14 13:19:05 | INFO     | [CYCLE_1] HOLD | Confidence: 0.590 < 0.719
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+/workspace/TENBID/analyzers/synthetic_timeframes.py:27: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
+  result[tf] = base_df.resample(rule).agg(ohlc_dict).dropna()
+2026-05-14 13:19:35 | INFO     | [CYCLE_2] HOLD | Confidence: 0.590 < 0.719
