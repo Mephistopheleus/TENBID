@@ -32,9 +32,10 @@ class OrderbookAnalyzer:
                     quality=DataQuality.VERY_LOW,
                     metadata={'error': 'Orderbook data unavailable'}
                 )
+                # Fallback: нейтральная оценка вместо 0.0 чтобы не убивать confidence
                 return {
                     "error": "Orderbook data unavailable",
-                    "confidence": 0.0,
+                    "confidence": 0.5,
                     "lineage": lineage
                 }
                 
@@ -114,9 +115,10 @@ class OrderbookAnalyzer:
                 quality=DataQuality.VERY_LOW,
                 metadata={'error': str(e)}
             )
+            # Fallback: нейтральная оценка вместо 0.0 чтобы не убивать confidence
             return {
                 "error": str(e),
-                "confidence": 0.0,
+                "confidence": 0.5,
                 "lineage": lineage
             }
 

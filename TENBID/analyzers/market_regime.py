@@ -154,6 +154,6 @@ class MarketRegimeAnalyzer:
             return result
 
         except Exception as e:
-            error_result = {"regime": "ERROR", "confidence": 0.0, "error": str(e)}
+            error_result = {"regime": "ERROR", "confidence": 0.5, "error": str(e)}
             context.add_result(self.name, error_result, lineage)
             return error_result

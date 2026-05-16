@@ -1,36 +1,60 @@
-```gitignore
-# Compiled Python files
+```
+# Compiled and build artifacts
 *.pyc
 __pycache__/
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
 
 # Dependencies
 .venv/
 venv/
-node_modules/
+env/
+ENV/
+.env
+.env.local
+.env.*
+requirements.txt.bak
+Pipfile.lock
+poetry.lock
 
-# Build artifacts
+# Build and distribution
 dist/
 build/
 *.egg-info/
+.coverage
+htmlcov/
+.coverage.*
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
+*.swo
 
-# Environment files
-.env
-.env.local
-*.env.*
-
-# Editors
+# Editors and IDEs
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
 
-# Coverage reports
-.coverage
-coverage/
-htmlcov/
-
-# Python cache
-.mypy_cache/
+# Testing
 .pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Icon?
 ```

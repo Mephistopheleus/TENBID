@@ -104,3 +104,11 @@ class BinanceConnector:
         """Get open orders"""
         params = {'symbol': self.symbol}
         return await self._request('GET', '/api/v3/openOrders', params=params, signed=True)
+    
+    async def get_order_book(self, symbol=None, limit=20):
+        """Get order book (depth)"""
+        params = {
+            'symbol': symbol or self.symbol,
+            'limit': limit
+        }
+        return await self._request('GET', '/api/v3/depth', params=params, signed=False)
