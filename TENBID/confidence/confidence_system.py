@@ -1,5 +1,8 @@
 """Confidence System - calculates trade confidence with adaptive weights and lineage tracking"""
+import logging
 from core.data_lineage import LineageTracker, DataSource, DataQuality, DataLineage
+
+logger = logging.getLogger(__name__)
 
 class ConfidenceSystem:
     def __init__(self, config, initial_weights=None):
@@ -9,19 +12,21 @@ class ConfidenceSystem:
         self.max_threshold = config.getfloat('CONFIDENCE', 'max_threshold')
         self.volatility_factor = config.getfloat('CONFIDENCE', 'volatility_impact_factor')
         
-        # Component weights (will be tuned by autotuner)
+        # Weights are now EXCLUSIVELY provided by Autotuner - no hardcoded defaults
+        # If no weights provided, use neutral weights (all 1.0) as temporary fallback
         if initial_weights:
             self.weights = initial_weights
         else:
+            # Neutral fallback - should be replaced by autotuner on first optimization cycle
             self.weights = {
                 'trend': 1.0,
-                'support_resistance': 1.2,
-                'volume': 0.8,
-                'pattern': 0.9,
-                'orderbook': 1.5,
-                'correlation': 1.1,
-                'fractal': 1.3,
-                'regime': 2.0
+                'support_resistance': 1.0,
+                'volume': 1.0,
+                'pattern': 1.0,
+                'orderbook': 1.0,
+                'correlation': 1.0,
+                'fractal': 1.0,
+                'regime': 1.0
             }
     
     def calculate(self, analysis, data_dict, btc_result=None, fractal_result=None, orderbook_result=None, pattern_result=None, regime_result=None, override_weights=None):
@@ -35,7 +40,7 @@ class ConfidenceSystem:
             orderbook_result: результат анализа стакана
             pattern_result: результат анализа паттернов
             regime_result: результат определения рыночного режима
-            override_weights: опциональные веса от Autotuner
+            override_weights: REQUIRED - weights from Autotuner (no hardcoded weights)
             
         Returns:
             dict: {
@@ -46,7 +51,10 @@ class ConfidenceSystem:
                 'component_lineages': dict
             }
         """
-        # Use override weights from Autotuner if provided
+        # CRITICAL: Must receive weights from Autotuner - no hardcoded values
+        if override_weights is None:
+            logger.warning("No override_weights provided to calculate(). Using internal weights (should come from Autotuner).")
+        
         weights = override_weights if override_weights else self.weights.copy()
         
         scores = {}
@@ -170,13 +178,11 @@ class ConfidenceSystem:
         # Fractal score - из фрактального анализа (добавляем как новый компонент)
         if fractal_result and 'confidence' in fractal_result:
             scores['fractal'] = fractal_result.get('confidence', 0.5)
-            self.weights['fractal'] = 1.3  # Добавляем вес для фракталов
             if 'lineage' in fractal_result and fractal_result['lineage']:
                 component_lineages['fractal'] = fractal_result['lineage']
                 all_lineages.append(fractal_result['lineage'])
         else:
             scores['fractal'] = 0.5
-            self.weights['fractal'] = 1.3
             fractal_lineage = LineageTracker.create_from_source(
                 source=DataSource.CALCULATED,
                 quality=DataQuality.LOW,
@@ -190,29 +196,24 @@ class ConfidenceSystem:
             regime = regime_result.get('regime', 'UNKNOWN')
             base_confidence = regime_result.get('confidence', 0.5)
             
-            # Адаптируем вес в зависимости от режима
+            # Адаптируем вес в зависимости от режима через weights (веса теперь приходят от autotuner)
             # В режиме HIGH_VOLATILITY снижаем доверие ко всем сигналам
             if regime == 'HIGH_VOLATILITY':
                 scores['regime'] = base_confidence * 0.7  # Штраф за хаос
-                self.weights['regime'] = 2.0  # Высокий вес - режим очень важен
             elif regime == 'RANGING':
                 # Во флэте трендовые стратегии работают хуже
                 scores['regime'] = base_confidence * 0.85
-                self.weights['regime'] = 1.8
             elif regime in ['TREND_UP', 'TREND_DOWN']:
                 # В тренде повышаем доверие
                 scores['regime'] = base_confidence
-                self.weights['regime'] = 2.5  # Максимальный вес для тренда
             else:
                 scores['regime'] = 0.5
-                self.weights['regime'] = 1.5
             
             if 'lineage' in regime_result and regime_result['lineage']:
                 component_lineages['regime'] = regime_result['lineage']
                 all_lineages.append(regime_result['lineage'])
         else:
             scores['regime'] = 0.5
-            self.weights['regime'] = 1.5
             regime_lineage = LineageTracker.create_from_source(
                 source=DataSource.CALCULATED,
                 quality=DataQuality.LOW,
