@@ -93,10 +93,19 @@ class ShadowCalculator:
         return test_data
 
     def create_trade_snapshot(self, trade_info: Dict[str, Any], analyzer_results: Dict[str, Any], 
-                            weights: Dict[str, float], outcome: Optional[Dict] = None) -> Dict[str, Any]:
+                            weights: Dict[str, float], outcome: Optional[Dict] = None,
+                            is_shadow: bool = False, shadow_reason: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a complete snapshot of a trade decision for Autotuner analysis.
         Called when a trade is opened (initial snapshot) and updated when closed.
+        
+        Args:
+            trade_info: Basic trade information
+            analyzer_results: Results from all analyzers
+            weights: Weights used for the decision (from Autotuner)
+            outcome: Trade outcome (filled when trade closes)
+            is_shadow: Whether this is a shadow (simulated) trade
+            shadow_reason: Reason why this was a shadow trade (e.g., 'LOW_CONFIDENCE', 'RISK_LIMIT')
         """
         snapshot = {
             'trade_id': trade_info.get('trade_id', f"shadow_{datetime.now().timestamp()}"),
@@ -123,6 +132,10 @@ class ShadowCalculator:
             'position_size': trade_info.get('position_size', 0.0),
             'final_confidence': trade_info.get('confidence', 0.0),
             
+            # Shadow trade tracking
+            'is_shadow': is_shadow,
+            'shadow_reason': shadow_reason,
+            
             # Outcome (filled when trade closes)
             'exit_price': outcome.get('exit_price') if outcome else None,
             'exit_reason': outcome.get('exit_reason') if outcome else None,
@@ -135,6 +148,7 @@ class ShadowCalculator:
             'max_profit_during_trade': outcome.get('max_profit', 0.0) if outcome else 0.0
         }
         
-        logger.debug(f"Created trade snapshot: {snapshot['trade_id']}")
+        trade_type = "SHADOW" if is_shadow else "REAL"
+        logger.debug(f"Created {trade_type} trade snapshot: {snapshot['trade_id']}")
         return snapshot
 

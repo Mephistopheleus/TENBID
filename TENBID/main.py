@@ -161,13 +161,17 @@ async def main():
             pattern_result = pattern_analyzer.analyze(context)
             regime_result = market_regime_analyzer.analyze(context)
             
-            # Calculate confidence
-            confidence_result = confidence_sys.calculate(analysis, all_data, btc_result, fractal_result, orderbook_result, pattern_result, regime_result)
+            # Get optimized weights from Autotuner FIRST (before calculating confidence)
+            optimized_weights = autotuner.get_recommendation({})
+            
+            # Calculate confidence with weights from Autotuner
+            confidence_result = confidence_sys.calculate(
+                analysis, all_data, btc_result, fractal_result, 
+                orderbook_result, pattern_result, regime_result,
+                override_weights=optimized_weights  # Pass weights from Autotuner
+            )
             current_confidence = confidence_result['total_confidence']
             score_lineage = confidence_result.get('score_lineage')
-            
-            # Get optimized weights from Autotuner
-            optimized_weights = autotuner.get_recommendation({})
             
             # Get adaptive threshold
             threshold = confidence_sys.get_adaptive_threshold(analysis)
