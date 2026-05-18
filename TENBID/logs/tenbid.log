@@ -1115,3 +1115,271 @@ AttributeError: 'tuple' object has no attribute 'iloc'
 2026-05-16 11:29:28 | INFO     | Built 7 synthetic timeframes with lineage tracking
 2026-05-16 11:29:29 | INFO     | [CYCLE_1] HOLD | Confidence: 0.483 < 0.716
 2026-05-16 11:29:29 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:54:14 | INFO     | ============================================================
+2026-05-16 11:54:14 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-16 11:54:14 | INFO     | Mode: TESTNET
+2026-05-16 11:54:14 | INFO     | Symbol: DOGEUSDT
+2026-05-16 11:54:14 | INFO     | Initial Balance: 200.0 USDT
+2026-05-16 11:54:14 | INFO     | ============================================================
+2026-05-16 11:54:14 | INFO     | Connected to Binance API
+2026-05-16 11:54:14 | INFO     | Warming up with 300 candles...
+2026-05-16 11:54:14 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-16 11:54:14 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-16 11:54:19 | INFO     | [CYCLE_1] HOLD | Confidence: 0.483 < 0.714
+2026-05-16 11:54:19 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:54:54 | INFO     | [CYCLE_2] HOLD | Confidence: 0.483 < 0.714
+2026-05-16 11:54:54 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:55:30 | INFO     | [CYCLE_3] HOLD | Confidence: 0.480 < 0.714
+2026-05-16 11:55:30 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:56:05 | INFO     | [CYCLE_4] HOLD | Confidence: 0.480 < 0.714
+2026-05-16 11:56:05 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:56:40 | INFO     | [CYCLE_5] HOLD | Confidence: 0.480 < 0.714
+2026-05-16 11:56:40 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:57:15 | INFO     | [CYCLE_6] HOLD | Confidence: 0.480 < 0.714
+2026-05-16 11:57:15 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:57:50 | INFO     | [CYCLE_7] HOLD | Confidence: 0.480 < 0.714
+2026-05-16 11:57:50 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:58:25 | INFO     | [CYCLE_8] HOLD | Confidence: 0.481 < 0.714
+2026-05-16 11:58:25 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:59:00 | INFO     | [CYCLE_9] HOLD | Confidence: 0.481 < 0.714
+2026-05-16 11:59:00 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:59:35 | INFO     | [CYCLE_10] HOLD | Confidence: 0.481 < 0.714
+2026-05-16 11:59:35 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 11:59:35 | INFO     | Running Autotuner optimization...
+2026-05-16 11:59:35 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-05-16 11:59:35 | INFO     | \n============================================================
+2026-05-16 11:59:35 | INFO     | PERIODIC REPORT
+2026-05-16 11:59:35 | INFO     | ============================================================
+2026-05-16 11:59:35 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 11:59:35 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 11:59:35 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 11:59:35 | INFO     | Total Signals: 10
+2026-05-16 11:59:35 | INFO     | Open Decisions: 0
+2026-05-16 11:59:35 | INFO     | Hold Decisions: 10
+2026-05-16 11:59:35 | INFO     | Total Trades: 0
+2026-05-16 11:59:35 | INFO     | Winning Trades: 0
+2026-05-16 11:59:35 | INFO     | Losing Trades: 0
+2026-05-16 11:59:35 | INFO     | Winrate: 0.0%
+2026-05-16 11:59:35 | INFO     | Shadow Winrate: 0.0%
+2026-05-16 11:59:35 | INFO     | Avg Trade PnL: N/A
+2026-05-16 11:59:35 | INFO     | ============================================================\n
+2026-05-16 12:00:11 | INFO     | [CYCLE_11] HOLD | Confidence: 0.481 < 0.711
+2026-05-16 12:00:11 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:00:46 | INFO     | [CYCLE_12] HOLD | Confidence: 0.481 < 0.711
+2026-05-16 12:00:46 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:01:21 | INFO     | [CYCLE_13] HOLD | Confidence: 0.482 < 0.711
+2026-05-16 12:01:21 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:01:56 | INFO     | [CYCLE_14] HOLD | Confidence: 0.488 < 0.712
+2026-05-16 12:01:56 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:02:31 | INFO     | [CYCLE_15] HOLD | Confidence: 0.491 < 0.712
+2026-05-16 12:02:31 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:03:06 | INFO     | [CYCLE_16] HOLD | Confidence: 0.496 < 0.712
+2026-05-16 12:03:06 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:03:41 | INFO     | [CYCLE_17] HOLD | Confidence: 0.496 < 0.712
+2026-05-16 12:03:41 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:04:17 | INFO     | [CYCLE_18] HOLD | Confidence: 0.496 < 0.712
+2026-05-16 12:04:17 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:04:52 | INFO     | [CYCLE_19] HOLD | Confidence: 0.497 < 0.712
+2026-05-16 12:04:52 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:04:52 | INFO     | \n============================================================
+2026-05-16 12:04:52 | INFO     | PERIODIC REPORT
+2026-05-16 12:04:52 | INFO     | ============================================================
+2026-05-16 12:04:52 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 12:04:52 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 12:04:52 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 12:04:52 | INFO     | Total Signals: 19
+2026-05-16 12:04:52 | INFO     | Open Decisions: 0
+2026-05-16 12:04:52 | INFO     | Hold Decisions: 19
+2026-05-16 12:04:52 | INFO     | Total Trades: 0
+2026-05-16 12:04:52 | INFO     | Winning Trades: 0
+2026-05-16 12:04:52 | INFO     | Losing Trades: 0
+2026-05-16 12:04:52 | INFO     | Winrate: 0.0%
+2026-05-16 12:04:52 | INFO     | Shadow Winrate: 0.0%
+2026-05-16 12:04:52 | INFO     | Avg Trade PnL: N/A
+2026-05-16 12:04:52 | INFO     | ============================================================\n
+2026-05-16 12:05:27 | INFO     | [CYCLE_20] HOLD | Confidence: 0.485 < 0.712
+2026-05-16 12:05:27 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:05:27 | INFO     | Running Autotuner optimization...
+2026-05-16 12:05:27 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-05-16 12:06:02 | INFO     | [CYCLE_21] HOLD | Confidence: 0.485 < 0.712
+2026-05-16 12:06:02 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:06:37 | INFO     | [CYCLE_22] HOLD | Confidence: 0.485 < 0.712
+2026-05-16 12:06:37 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:07:12 | INFO     | [CYCLE_23] HOLD | Confidence: 0.485 < 0.712
+2026-05-16 12:07:12 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:07:47 | INFO     | [CYCLE_24] HOLD | Confidence: 0.485 < 0.712
+2026-05-16 12:07:47 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:08:22 | INFO     | [CYCLE_25] HOLD | Confidence: 0.485 < 0.712
+2026-05-16 12:08:22 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:08:58 | INFO     | [CYCLE_26] HOLD | Confidence: 0.493 < 0.712
+2026-05-16 12:08:58 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:09:33 | INFO     | [CYCLE_27] HOLD | Confidence: 0.502 < 0.712
+2026-05-16 12:09:33 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:10:08 | INFO     | [CYCLE_28] HOLD | Confidence: 0.502 < 0.712
+2026-05-16 12:10:08 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:10:08 | INFO     | \n============================================================
+2026-05-16 12:10:08 | INFO     | PERIODIC REPORT
+2026-05-16 12:10:08 | INFO     | ============================================================
+2026-05-16 12:10:08 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 12:10:08 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 12:10:08 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 12:10:08 | INFO     | Total Signals: 28
+2026-05-16 12:10:08 | INFO     | Open Decisions: 0
+2026-05-16 12:10:08 | INFO     | Hold Decisions: 28
+2026-05-16 12:10:08 | INFO     | Total Trades: 0
+2026-05-16 12:10:08 | INFO     | Winning Trades: 0
+2026-05-16 12:10:08 | INFO     | Losing Trades: 0
+2026-05-16 12:10:08 | INFO     | Winrate: 0.0%
+2026-05-16 12:10:08 | INFO     | Shadow Winrate: 7.1%
+2026-05-16 12:10:08 | INFO     | Avg Trade PnL: N/A
+2026-05-16 12:10:08 | INFO     | ============================================================\n
+2026-05-16 12:10:43 | INFO     | [CYCLE_29] HOLD | Confidence: 0.481 < 0.711
+2026-05-16 12:10:43 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:11:18 | INFO     | [CYCLE_30] HOLD | Confidence: 0.481 < 0.711
+2026-05-16 12:11:18 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:11:18 | INFO     | Running Autotuner optimization...
+2026-05-16 12:11:18 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-05-16 12:11:53 | INFO     | [CYCLE_31] HOLD | Confidence: 0.481 < 0.711
+2026-05-16 12:11:53 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:12:28 | INFO     | [CYCLE_32] HOLD | Confidence: 0.481 < 0.711
+2026-05-16 12:12:28 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:13:04 | INFO     | [CYCLE_33] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:13:04 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:13:39 | INFO     | [CYCLE_34] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:13:39 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:14:14 | INFO     | [CYCLE_35] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:14:14 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:14:49 | INFO     | [CYCLE_36] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:14:49 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:15:24 | INFO     | [CYCLE_37] HOLD | Confidence: 0.482 < 0.711
+2026-05-16 12:15:24 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:15:24 | INFO     | \n============================================================
+2026-05-16 12:15:24 | INFO     | PERIODIC REPORT
+2026-05-16 12:15:24 | INFO     | ============================================================
+2026-05-16 12:15:24 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 12:15:24 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 12:15:24 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 12:15:24 | INFO     | Total Signals: 37
+2026-05-16 12:15:24 | INFO     | Open Decisions: 0
+2026-05-16 12:15:24 | INFO     | Hold Decisions: 37
+2026-05-16 12:15:24 | INFO     | Total Trades: 0
+2026-05-16 12:15:24 | INFO     | Winning Trades: 0
+2026-05-16 12:15:24 | INFO     | Losing Trades: 0
+2026-05-16 12:15:24 | INFO     | Winrate: 0.0%
+2026-05-16 12:15:24 | INFO     | Shadow Winrate: 5.4%
+2026-05-16 12:15:24 | INFO     | Avg Trade PnL: N/A
+2026-05-16 12:15:24 | INFO     | ============================================================\n
+2026-05-16 12:15:59 | INFO     | [CYCLE_38] HOLD | Confidence: 0.482 < 0.711
+2026-05-16 12:15:59 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:16:34 | INFO     | [CYCLE_39] HOLD | Confidence: 0.485 < 0.711
+2026-05-16 12:16:34 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:17:09 | INFO     | [CYCLE_40] HOLD | Confidence: 0.485 < 0.711
+2026-05-16 12:17:09 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:17:09 | INFO     | Running Autotuner optimization...
+2026-05-16 12:17:09 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-05-16 12:17:45 | INFO     | [CYCLE_41] HOLD | Confidence: 0.485 < 0.711
+2026-05-16 12:17:45 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:18:20 | INFO     | [CYCLE_42] HOLD | Confidence: 0.485 < 0.711
+2026-05-16 12:18:20 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:18:55 | INFO     | [CYCLE_43] HOLD | Confidence: 0.489 < 0.712
+2026-05-16 12:18:55 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:19:30 | INFO     | [CYCLE_44] HOLD | Confidence: 0.490 < 0.712
+2026-05-16 12:19:30 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:20:05 | INFO     | [CYCLE_45] HOLD | Confidence: 0.492 < 0.712
+2026-05-16 12:20:05 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:20:40 | INFO     | [CYCLE_46] HOLD | Confidence: 0.489 < 0.711
+2026-05-16 12:20:40 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:20:40 | INFO     | \n============================================================
+2026-05-16 12:20:40 | INFO     | PERIODIC REPORT
+2026-05-16 12:20:40 | INFO     | ============================================================
+2026-05-16 12:20:40 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 12:20:40 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 12:20:40 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 12:20:40 | INFO     | Total Signals: 46
+2026-05-16 12:20:40 | INFO     | Open Decisions: 0
+2026-05-16 12:20:40 | INFO     | Hold Decisions: 46
+2026-05-16 12:20:40 | INFO     | Total Trades: 0
+2026-05-16 12:20:40 | INFO     | Winning Trades: 0
+2026-05-16 12:20:40 | INFO     | Losing Trades: 0
+2026-05-16 12:20:40 | INFO     | Winrate: 0.0%
+2026-05-16 12:20:40 | INFO     | Shadow Winrate: 4.3%
+2026-05-16 12:20:40 | INFO     | Avg Trade PnL: N/A
+2026-05-16 12:20:40 | INFO     | ============================================================\n
+2026-05-16 12:21:15 | INFO     | [CYCLE_47] HOLD | Confidence: 0.489 < 0.711
+2026-05-16 12:21:15 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:21:50 | INFO     | [CYCLE_48] HOLD | Confidence: 0.490 < 0.711
+2026-05-16 12:21:50 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:22:26 | INFO     | [CYCLE_49] HOLD | Confidence: 0.493 < 0.711
+2026-05-16 12:22:26 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:23:01 | INFO     | [CYCLE_50] HOLD | Confidence: 0.493 < 0.711
+2026-05-16 12:23:01 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:23:01 | INFO     | Running Autotuner optimization...
+2026-05-16 12:23:01 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-05-16 12:23:36 | INFO     | [CYCLE_51] HOLD | Confidence: 0.494 < 0.711
+2026-05-16 12:23:36 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:24:11 | INFO     | [CYCLE_52] HOLD | Confidence: 0.494 < 0.711
+2026-05-16 12:24:11 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:24:46 | INFO     | [CYCLE_53] HOLD | Confidence: 0.494 < 0.711
+2026-05-16 12:24:46 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:25:21 | INFO     | [CYCLE_54] HOLD | Confidence: 0.470 < 0.711
+2026-05-16 12:25:21 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:25:56 | INFO     | [CYCLE_55] HOLD | Confidence: 0.473 < 0.712
+2026-05-16 12:25:56 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:25:56 | INFO     | \n============================================================
+2026-05-16 12:25:56 | INFO     | PERIODIC REPORT
+2026-05-16 12:25:56 | INFO     | ============================================================
+2026-05-16 12:25:56 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 12:25:56 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 12:25:56 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 12:25:56 | INFO     | Total Signals: 55
+2026-05-16 12:25:56 | INFO     | Open Decisions: 0
+2026-05-16 12:25:56 | INFO     | Hold Decisions: 55
+2026-05-16 12:25:56 | INFO     | Total Trades: 0
+2026-05-16 12:25:56 | INFO     | Winning Trades: 0
+2026-05-16 12:25:56 | INFO     | Losing Trades: 0
+2026-05-16 12:25:56 | INFO     | Winrate: 0.0%
+2026-05-16 12:25:56 | INFO     | Shadow Winrate: 3.6%
+2026-05-16 12:25:56 | INFO     | Avg Trade PnL: N/A
+2026-05-16 12:25:56 | INFO     | ============================================================\n
+2026-05-16 12:26:31 | INFO     | [CYCLE_56] HOLD | Confidence: 0.473 < 0.712
+2026-05-16 12:26:31 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:27:07 | INFO     | [CYCLE_57] HOLD | Confidence: 0.473 < 0.712
+2026-05-16 12:27:07 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:27:42 | INFO     | [CYCLE_58] HOLD | Confidence: 0.473 < 0.712
+2026-05-16 12:27:42 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:28:17 | INFO     | [CYCLE_59] HOLD | Confidence: 0.473 < 0.712
+2026-05-16 12:28:17 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:28:52 | INFO     | [CYCLE_60] HOLD | Confidence: 0.473 < 0.712
+2026-05-16 12:28:52 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:28:52 | INFO     | Running Autotuner optimization...
+2026-05-16 12:28:52 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-05-16 12:29:27 | INFO     | [CYCLE_61] HOLD | Confidence: 0.473 < 0.712
+2026-05-16 12:29:27 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:30:02 | INFO     | [CYCLE_62] HOLD | Confidence: 0.473 < 0.712
+2026-05-16 12:30:02 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:30:37 | INFO     | [CYCLE_63] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:30:37 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:31:12 | INFO     | [CYCLE_64] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:31:12 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:31:12 | INFO     | \n============================================================
+2026-05-16 12:31:12 | INFO     | PERIODIC REPORT
+2026-05-16 12:31:12 | INFO     | ============================================================
+2026-05-16 12:31:12 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-16 12:31:12 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-16 12:31:12 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-16 12:31:12 | INFO     | Total Signals: 64
+2026-05-16 12:31:12 | INFO     | Open Decisions: 0
+2026-05-16 12:31:12 | INFO     | Hold Decisions: 64
+2026-05-16 12:31:12 | INFO     | Total Trades: 0
+2026-05-16 12:31:12 | INFO     | Winning Trades: 0
+2026-05-16 12:31:12 | INFO     | Losing Trades: 0
+2026-05-16 12:31:12 | INFO     | Winrate: 0.0%
+2026-05-16 12:31:12 | INFO     | Shadow Winrate: 3.1%
+2026-05-16 12:31:12 | INFO     | Avg Trade PnL: N/A
+2026-05-16 12:31:12 | INFO     | ============================================================\n
+2026-05-16 12:31:48 | INFO     | [CYCLE_65] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:31:48 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:32:23 | INFO     | [CYCLE_66] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:32:23 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-16 12:32:58 | INFO     | [CYCLE_67] HOLD | Confidence: 0.483 < 0.711
+2026-05-16 12:32:58 | DEBUG    | Shadow analysis saved for forbidden trade
