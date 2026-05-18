@@ -1,46 +1,41 @@
 ```
-# Logs and temp files
-*.log
-*.tmp
-*.swp
+# Configuration and temporary files
+*.ini.swp
+*.ini~
+config.ini.bak
+config.ini~
 
-# Environment
-.env
-.env.local
-.env.*
-
-# Editors
-.vscode/
-.idea/
-
-# Python
+# Python specific
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
-*.so
-.coverage
-htmlcov/
-.coverage.*
-.pytest_cache/
-.mypy_cache/
-
-# Build directories
-build/
-dist/
-*.egg-info/
-
-# Virtual environments
+env/
 venv/
 .venv/
-env/
 .ENV/
+.python-version
+
+# Logs
+*.log
 
 # OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Original rules preserved
-*.log
+# Backup files
+*~
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*.tmp
+*.temp
 ```
