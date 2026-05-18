@@ -27,10 +27,10 @@ class BinanceConnector:
         self.session = aiohttp.ClientSession()
         # Test connection
         try:
-            await self._request('GET', '/api/v3/time', signed=False)
+            await self._request('GET', '/fapi/v1/time', signed=False)
             return True
         except Exception as e:
-            raise ConnectionError(f"Failed to connect to Binance: {e}")
+            raise ConnectionError(f"Failed to connect to Binance Futures: {e}")
     
     async def close(self):
         if self.session:
@@ -69,39 +69,37 @@ class BinanceConnector:
             'interval': interval,
             'limit': limit
         }
-        return await self._request('GET', '/api/v3/klines', params=params, signed=False)
+        return await self._request('GET', '/fapi/v1/klines', params=params, signed=False)
     
     async def get_ticker_price(self, symbol=None):
         """Get current price"""
         params = {'symbol': symbol or self.symbol}
-        return await self._request('GET', '/api/v3/ticker/price', params=params, signed=False)
+        return await self._request('GET', '/fapi/v1/ticker/price', params=params, signed=False)
     
     async def get_account_balance(self):
-        """Get account balance"""
-        return await self._request('GET', '/api/v3/account', signed=True)
+        """Get account balance (Futures)"""
+        return await self._request('GET', '/fapi/v2/balance', signed=True)
     
     async def place_order(self, side, quantity, price=None, order_type='LIMIT'):
-        """Place a trade order (Market/Limit)"""
+        """Place a trade order (Market/Limit) for Futures"""
         params = {
             'symbol': self.symbol,
             'side': side.upper(),
             'type': order_type.upper(),
             'quantity': self._format_quantity(quantity),
-            'timeInForce': 'GTC' if order_type == 'LIMIT' else None
         }
         
-        # Remove timeInForce for MARKET orders
-        if order_type.upper() == 'MARKET':
-            params.pop('timeInForce', None)
-        elif price and order_type == 'LIMIT':
+        # Add price for LIMIT orders
+        if order_type.upper() == 'LIMIT' and price:
             params['price'] = self._format_price(price)
+            params['timeInForce'] = 'GTC'
         
         try:
-            result = await self._request('POST', '/api/v3/order', params=params, signed=True)
-            logger.info(f"Order placed: {side} {quantity} {self.symbol} @ {price or 'MARKET'}")
+            result = await self._request('POST', '/fapi/v1/order', params=params, signed=True)
+            logger.info(f"Futures Order placed: {side} {quantity} {self.symbol} @ {price or 'MARKET'}")
             return result
         except Exception as e:
-            logger.error(f"Failed to place order: {e}")
+            logger.error(f"Failed to place futures order: {e}")
             raise
     
     async def place_market_order(self, side, quantity):
@@ -109,12 +107,12 @@ class BinanceConnector:
         return await self.place_order(side, quantity, order_type='MARKET')
     
     async def get_order_status(self, order_id):
-        """Get order status by ID"""
+        """Get order status by ID (Futures)"""
         params = {
             'symbol': self.symbol,
             'orderId': order_id
         }
-        return await self._request('GET', '/api/v3/order', params=params, signed=True)
+        return await self._request('GET', '/fapi/v1/order', params=params, signed=True)
     
     def _format_quantity(self, qty):
         """Format quantity according to Binance LOT_SIZE rules"""
@@ -127,22 +125,22 @@ class BinanceConnector:
         return f"{price:.2f}"
     
     async def cancel_order(self, order_id):
-        """Cancel an order"""
+        """Cancel an order (Futures)"""
         params = {
             'symbol': self.symbol,
             'orderId': order_id
         }
-        return await self._request('DELETE', '/api/v3/order', params=params, signed=True)
+        return await self._request('DELETE', '/fapi/v1/order', params=params, signed=True)
     
     async def get_open_orders(self):
-        """Get open orders"""
+        """Get open orders (Futures)"""
         params = {'symbol': self.symbol}
-        return await self._request('GET', '/api/v3/openOrders', params=params, signed=True)
+        return await self._request('GET', '/fapi/v1/openOrders', params=params, signed=True)
     
     async def get_order_book(self, symbol=None, limit=20):
-        """Get order book (depth)"""
+        """Get order book (depth) for Futures"""
         params = {
             'symbol': symbol or self.symbol,
             'limit': limit
         }
-        return await self._request('GET', '/api/v3/depth', params=params, signed=False)
+        return await self._request('GET', '/fapi/v1/depth', params=params, signed=False)
