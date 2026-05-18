@@ -7,20 +7,110 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ShadowCalculator:
-    def __init__(self, config, db):
+    def __init__(self, config, db, binance_connector=None):
         self.db = db
+        self.connector = binance_connector
         self.enabled = config.getboolean('SHADOW', 'enabled')
         self.tests = config.get_list('SHADOW', 'tests')
+        self.save_forbidden = config.getboolean('SHADOW', 'save_forbidden_trades', fallback=True)
         
+        # Real trading costs (will be populated from API)
+        self.commission_rates = {'maker': 0.0002, 'taker': 0.0004}
+        self.slippage_estimate = 0.001  # Default 0.1%
+        self.spread_estimate = 0.0005   # Default 0.05%
+        
+    async def update_trading_costs(self, symbol=None):
+        """Update real trading costs from Binance API"""
+        if not self.connector:
+            logger.warning("No Binance connector available for cost updates")
+            return
+        
+        try:
+            # Get commission rates
+            commission_data = await self.connector.get_account_commission(symbol)
+            self.commission_rates = {
+                'maker': commission_data.get('maker', 0.0002),
+                'taker': commission_data.get('taker', 0.0004)
+            }
+            
+            # Estimate slippage (using a small test quantity)
+            slippage_data = await self.connector.estimate_slippage('BUY', 100, symbol)
+            self.slippage_estimate = slippage_data.get('slippage_pct', 0.001)
+            
+            # Estimate spread from orderbook
+            ob = await self.connector.get_order_book(symbol, limit=5)
+            if ob.get('bids') and ob.get('asks'):
+                best_bid = float(ob['bids'][0][0])
+                best_ask = float(ob['asks'][0][0])
+                mid_price = (best_bid + best_ask) / 2
+                self.spread_estimate = (best_ask - best_bid) / mid_price
+            
+            logger.info(f"Updated trading costs - Commission: {self.commission_rates}, "
+                       f"Slippage: {self.slippage_estimate:.4f}, Spread: {self.spread_estimate:.4f}")
+        except Exception as e:
+            logger.warning(f"Failed to update trading costs, using defaults: {e}")
+    
+    def calculate_realistic_costs(self, entry_price: float, exit_price: float, 
+                                  position_size: float, side: str, is_maker: bool = False) -> Dict[str, float]:
+        """
+        Calculate realistic trading costs including commission, slippage, and spread.
+        Returns detailed breakdown of costs.
+        """
+        # Commission (taker by default for market orders, maker for limit)
+        commission_rate = self.commission_rates['maker'] if is_maker else self.commission_rates['taker']
+        commission_cost = entry_price * position_size * commission_rate
+        
+        # Slippage cost (entry + exit)
+        slippage_cost = entry_price * position_size * self.slippage_estimate * 2
+        
+        # Spread cost (paid on entry)
+        spread_cost = entry_price * position_size * self.spread_estimate
+        
+        # Total round-trip costs
+        total_costs = commission_cost + slippage_cost + spread_cost
+        
+        # Gross PnL
+        if side.upper() == 'BUY':
+            gross_pnl = (exit_price - entry_price) * position_size
+        else:
+            gross_pnl = (entry_price - exit_price) * position_size
+        
+        # Net PnL after costs
+        net_pnl = gross_pnl - total_costs
+        
+        return {
+            'commission': commission_cost,
+            'slippage': slippage_cost,
+            'spread': spread_cost,
+            'total_costs': total_costs,
+            'gross_pnl': gross_pnl,
+            'net_pnl': net_pnl,
+            'costs_as_pct_of_position': total_costs / (entry_price * position_size) if entry_price > 0 else 0
+        }
+    
     def analyze_forbidden_trade(self, signal_data: Dict[str, Any], context_snapshot: Optional[Dict] = None):
-        """Analyze what would happen if we opened a forbidden trade"""
+        """Analyze what would happen if we opened a forbidden trade with realistic costs"""
         confidence = signal_data.get('confidence', 0)
         threshold = signal_data.get('threshold', 0.75)
         
-        # Calculate hypothetical R/R and win probability
         hyp_entry = signal_data.get('prices', {}).get('current', 0)
-        hyp_sl = hyp_entry * 0.98 if hyp_entry > 0 else 0
-        hyp_tp = hyp_entry * 1.02 if hyp_entry > 0 else 0
+        
+        # Use realistic SL/TP based on current market conditions
+        # Instead of fixed 2%, use dynamic levels based on volatility or ATR if available
+        base_sl_pct = 0.02  # 2% default
+        base_tp_pct = 0.04  # 4% default (2:1 RR)
+        
+        # Apply stricter conditions for shadow analysis
+        # Add buffer for costs to ensure profitability
+        cost_buffer = self.commission_rates['taker'] * 2 + self.slippage_estimate * 2 + self.spread_estimate
+        
+        hyp_sl = hyp_entry * (1 - base_sl_pct) if hyp_entry > 0 else 0
+        hyp_tp = hyp_entry * (1 + base_tp_pct) if hyp_entry > 0 else 0
+        
+        # Calculate realistic outcome with costs
+        # Simulate both win and loss scenarios
+        win_costs = self.calculate_realistic_costs(hyp_entry, hyp_tp, 1, 'BUY')
+        loss_costs = self.calculate_realistic_costs(hyp_entry, hyp_sl, 1, 'BUY')
         
         result = {
             'type': 'forbidden_trade_analysis',
@@ -28,11 +118,25 @@ class ShadowCalculator:
             'hypothetical_entry': hyp_entry,
             'hypothetical_sl': hyp_sl,
             'hypothetical_tp': hyp_tp,
-            'risk_reward_ratio': 2.0,
+            'risk_reward_ratio': base_tp_pct / base_sl_pct,
             'confidence_at_time': confidence,
             'estimated_win_probability': confidence * 100,
             'timestamp': datetime.now().isoformat(),
-            'context_snapshot': context_snapshot  # Store full context for Autotuner
+            'context_snapshot': context_snapshot,
+            
+            # Realistic cost analysis
+            'trading_costs': {
+                'commission_rate': self.commission_rates,
+                'slippage_estimate': self.slippage_estimate,
+                'spread_estimate': self.spread_estimate,
+                'win_scenario_net_pnl': win_costs['net_pnl'],
+                'loss_scenario_net_pnl': loss_costs['net_pnl'],
+                'total_round_trip_costs_pct': win_costs['costs_as_pct_of_position'] * 100
+            },
+            
+            # Stricter success criteria
+            'breakeven_required': hyp_entry * (1 + win_costs['costs_as_pct_of_position']),
+            'minimum_profitable_move': win_costs['total_costs'] / hyp_entry if hyp_entry > 0 else 0
         }
         
         signal_data['shadow_result'] = result

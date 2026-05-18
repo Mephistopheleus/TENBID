@@ -1383,3 +1383,56 @@ AttributeError: 'tuple' object has no attribute 'iloc'
 2026-05-16 12:32:23 | DEBUG    | Shadow analysis saved for forbidden trade
 2026-05-16 12:32:58 | INFO     | [CYCLE_67] HOLD | Confidence: 0.483 < 0.711
 2026-05-16 12:32:58 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-18 16:10:07 | INFO     | ============================================================
+2026-05-18 16:10:07 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-18 16:10:07 | INFO     | Mode: TESTNET
+2026-05-18 16:10:07 | INFO     | Symbol: DOGEUSDT
+2026-05-18 16:10:07 | INFO     | Initial Balance: 200.0 USDT
+2026-05-18 16:10:07 | INFO     | ============================================================
+2026-05-18 16:10:07 | INFO     | Connected to Binance API
+2026-05-18 16:10:07 | INFO     | Warming up with 300 candles...
+2026-05-18 16:10:07 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-18 16:10:07 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-18 16:10:12 | INFO     | [CYCLE_1] HOLD | Confidence: 0.485 < 0.729
+2026-05-18 16:10:12 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-18 16:10:40 | INFO     | \n============================================================
+2026-05-18 16:10:40 | INFO     | FINAL SESSION REPORT
+2026-05-18 16:10:40 | INFO     | ============================================================
+2026-05-18 16:10:40 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-18 16:10:40 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-18 16:10:40 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-18 16:10:40 | INFO     | Total Signals: 1
+2026-05-18 16:10:40 | INFO     | Open Decisions: 0
+2026-05-18 16:10:40 | INFO     | Hold Decisions: 1
+2026-05-18 16:10:40 | INFO     | Total Trades: 0
+2026-05-18 16:10:40 | INFO     | Winning Trades: 0
+2026-05-18 16:10:40 | INFO     | Losing Trades: 0
+2026-05-18 16:10:40 | INFO     | Winrate: 0.0%
+2026-05-18 16:10:40 | INFO     | Shadow Winrate: 0.0%
+2026-05-18 16:10:40 | INFO     | Avg Trade PnL: N/A
+2026-05-18 16:10:40 | INFO     | ============================================================
+2026-05-18 16:10:40 | INFO     | TENBID shutdown complete
+2026-05-18 16:17:43 | INFO     | ============================================================
+2026-05-18 16:17:43 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-18 16:17:43 | INFO     | Mode: TESTNET
+2026-05-18 16:17:43 | INFO     | Symbol: DOGEUSDT
+2026-05-18 16:17:43 | INFO     | Initial Balance: 200.0 USDT
+2026-05-18 16:17:43 | INFO     | ============================================================
+2026-05-18 16:17:43 | INFO     | Connected to Binance API
+2026-05-18 16:17:43 | INFO     | Warming up with 300 candles...
+2026-05-18 16:17:43 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-18 16:17:43 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-18 16:17:48 | INFO     | [CYCLE_1] HOLD | Confidence: 0.476 < 0.728
+2026-05-18 16:17:48 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-18 16:18:22 | INFO     | ============================================================
+2026-05-18 16:18:22 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-18 16:18:22 | INFO     | Mode: TESTNET
+2026-05-18 16:18:22 | INFO     | Symbol: DOGEUSDT
+2026-05-18 16:18:22 | INFO     | Initial Balance: 200.0 USDT
+2026-05-18 16:18:22 | INFO     | ============================================================
+2026-05-18 16:18:22 | INFO     | Connected to Binance API
+2026-05-18 16:18:22 | INFO     | Warming up with 300 candles...
+2026-05-18 16:18:22 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-18 16:18:22 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-18 16:18:27 | INFO     | [CYCLE_1] HOLD | Confidence: 0.479 < 0.728
+2026-05-18 16:18:27 | DEBUG    | Shadow analysis saved for forbidden trade
