@@ -1,41 +1,71 @@
-```
-# Configuration and temporary files
-*.ini.swp
-*.ini~
-config.ini.bak
-config.ini~
-
-# Python specific
-__pycache__/
+# Compiled and build artifacts
 *.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
+__pycache__/
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+*.class
+*.out
+
+# Dependencies
 .venv/
-.ENV/
-.python-version
+venv/
+node_modules/
+dist/
+build/
+target/
+.gradle/
+.mypy_cache/
+.pytest_cache/
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
+*.swo
 
-# OS generated files
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# Backup files
-*~
-*.bak
-*.backup
-*.old
-*.orig
-*.rej
-*.tmp
-*.temp
-```
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
