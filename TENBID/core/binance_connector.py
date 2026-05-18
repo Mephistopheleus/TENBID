@@ -3,22 +3,25 @@ import hashlib
 import hmac
 import time
 import aiohttp
+import logging
 from urllib.parse import urlencode
+
+logger = logging.getLogger(__name__)
 
 class BinanceConnector:
     def __init__(self, config):
-        self.mode = config.get('GENERAL', 'mode')
+        self.mode = config.get('BINANCE', 'TRADING_MODE')
         if self.mode == 'TESTNET':
-            self.api_key = config.get('BINANCE_TESTNET', 'api_key')
-            self.secret_key = config.get('BINANCE_TESTNET', 'secret_key')
-            self.base_url = config.get('BINANCE_TESTNET', 'base_url')
+            self.api_key = config.get('BINANCE', 'TESTNET_API_KEY')
+            self.secret_key = config.get('BINANCE', 'TESTNET_SECRET_KEY')
+            self.base_url = config.get('BINANCE', 'TESTNET_BASE_URL')
         else:
-            self.api_key = config.get('BINANCE_LIVE', 'api_key')
-            self.secret_key = config.get('BINANCE_LIVE', 'secret_key')
-            self.base_url = config.get('BINANCE_LIVE', 'base_url')
+            self.api_key = config.get('BINANCE', 'LIVE_API_KEY')
+            self.secret_key = config.get('BINANCE', 'LIVE_SECRET_KEY')
+            self.base_url = config.get('BINANCE', 'LIVE_BASE_URL')
         
         self.session = None
-        self.symbol = config.get('GENERAL', 'symbol')
+        self.symbol = config.get('TRADING', 'SYMBOL')
     
     async def connect(self):
         self.session = aiohttp.ClientSession()
@@ -78,19 +81,50 @@ class BinanceConnector:
         return await self._request('GET', '/api/v3/account', signed=True)
     
     async def place_order(self, side, quantity, price=None, order_type='LIMIT'):
-        """Place a trade order"""
+        """Place a trade order (Market/Limit)"""
         params = {
             'symbol': self.symbol,
             'side': side.upper(),
             'type': order_type.upper(),
-            'quantity': quantity,
-            'timeInForce': 'GTC'
+            'quantity': self._format_quantity(quantity),
+            'timeInForce': 'GTC' if order_type == 'LIMIT' else None
         }
         
-        if price and order_type == 'LIMIT':
-            params['price'] = price
+        # Remove timeInForce for MARKET orders
+        if order_type.upper() == 'MARKET':
+            params.pop('timeInForce', None)
+        elif price and order_type == 'LIMIT':
+            params['price'] = self._format_price(price)
         
-        return await self._request('POST', '/api/v3/order', params=params, signed=True)
+        try:
+            result = await self._request('POST', '/api/v3/order', params=params, signed=True)
+            logger.info(f"Order placed: {side} {quantity} {self.symbol} @ {price or 'MARKET'}")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to place order: {e}")
+            raise
+    
+    async def place_market_order(self, side, quantity):
+        """Place a MARKET order for immediate execution"""
+        return await self.place_order(side, quantity, order_type='MARKET')
+    
+    async def get_order_status(self, order_id):
+        """Get order status by ID"""
+        params = {
+            'symbol': self.symbol,
+            'orderId': order_id
+        }
+        return await self._request('GET', '/api/v3/order', params=params, signed=True)
+    
+    def _format_quantity(self, qty):
+        """Format quantity according to Binance LOT_SIZE rules"""
+        # For most pairs: 6 decimal places, adjust based on symbol info if needed
+        return f"{qty:.6f}"
+    
+    def _format_price(self, price):
+        """Format price according to Binance PRICE_FILTER rules"""
+        # For most pairs: 2 decimal places, adjust based on symbol info
+        return f"{price:.2f}"
     
     async def cancel_order(self, order_id):
         """Cancel an order"""
