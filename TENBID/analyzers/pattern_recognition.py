@@ -114,11 +114,49 @@ class PatternRecognitionAnalyzer:
                curr_open > prev_close and curr_close < prev_open:
                 patterns_found.append({"type": "Bearish Engulfing", "signal": -1, "strength": 0.8})
 
-        # 4. Утренняя/Вечерняя звезда (упрощенно, 3 свечи)
+        # 4. Утренняя/Вечерняя звезда (Morning/Evening Star) - 3 свечи
         if len(c) > 2:
-            # Логика звезды опущена для краткости, но может быть добавлена
+            # Утренняя звезда (бычий разворот)
+            if c[-3] < o[-3] and \
+               abs(c[-2] - o[-2]) < avg_body * 0.5 and \
+               c[-1] > o[-1] and \
+               c[-1] > (o[-3] + c[-3]) / 2:
+                patterns_found.append({"type": "Morning Star", "signal": 1, "strength": 0.85})
             
-            pass
+            # Вечерняя звезда (медвежий разворот)
+            if c[-3] > o[-3] and \
+               abs(c[-2] - o[-2]) < avg_body * 0.5 and \
+               c[-1] < o[-1] and \
+               c[-1] < (o[-3] + c[-3]) / 2:
+                patterns_found.append({"type": "Evening Star", "signal": -1, "strength": 0.85})
+
+        # 5. Пин-бар (Pin Bar) - длинная тень с одной стороны
+        if curr_lower > (curr_body * 2) and curr_upper < curr_body:
+            patterns_found.append({"type": "Bullish Pin Bar", "signal": 1, "strength": 0.65})
+        elif curr_upper > (curr_body * 2) and curr_lower < curr_body:
+            patterns_found.append({"type": "Bearish Pin Bar", "signal": -1, "strength": 0.65})
+
+        # 6. Внутренний бар (Inside Bar) - диапазон внутри предыдущей свечи
+        if len(c) > 1:
+            if h[idx] < h[-2] and l[idx] > l[-2]:
+                patterns_found.append({"type": "Inside Bar", "signal": 0, "strength": 0.5})
+
+        # 7. Внешний бар (Outside Bar / Engulfing Range)
+        if len(c) > 1:
+            if h[idx] > h[-2] and l[idx] < l[-2]:
+                patterns_found.append({"type": "Outside Bar", "signal": 0, "strength": 0.55})
+
+        # 8. Три белых солдата / Три черные вороны
+        if len(c) > 3:
+            # Три белых солдата
+            if all(c[i] > o[i] for i in [-1, -2, -3]) and \
+               all(c[i] > c[i+1] for i in [-3, -2]):
+                patterns_found.append({"type": "Three White Soldiers", "signal": 1, "strength": 0.9})
+            
+            # Три черные вороны
+            if all(c[i] < o[i] for i in [-1, -2, -3]) and \
+               all(c[i] < c[i+1] for i in [-3, -2]):
+                patterns_found.append({"type": "Three Black Crows", "signal": -1, "strength": 0.9})
 
         return patterns_found
 
@@ -185,17 +223,51 @@ class PatternRecognitionAnalyzer:
             if abs(p1[1] - p2[1]) / p1[1] < 0.05:
                  patterns_found.append({"type": "Double Bottom", "signal": 1, "strength": 0.75})
 
-        # 3. Чашка с ручкой (Cup and Handle) - сложно детектить точно без ML, эвристика
-        # Ищем длительный спад, затем рост до прежних высот (чашка), затем небольшой откат (ручка)
-        # Упрощенно: если цена обновила максимум после долгого боковика/роста
+        # 3. Чашка с ручкой (Cup and Handle) - эвристика
         if n > 50:
             recent_high = max(highs[-20:])
             past_high = max(highs[-50:-20])
             if recent_high > past_high * 0.98 and recent_high < past_high * 1.02:
-                # Цена рядом с историческим максимумом месяца
-                # Проверяем наличие небольшого отката сейчас
                 if highs[-1] < recent_high * 0.98: 
                      patterns_found.append({"type": "Potential Cup & Handle", "signal": 1, "strength": 0.65})
+
+        # 4. Треугольники (Triangles) - Ascending, Descending, Symmetrical
+        if n > 30 and len(pivots_h) >= 3 and len(pivots_l) >= 3:
+            # Берем последние 3 пика и 3 впадины
+            last_peaks = pivots_h[-3:]
+            last_troughs = pivots_l[-3:]
+            
+            # Проверяем тренды линий
+            peak_slope = (last_peaks[-1][1] - last_peaks[0][1]) / (last_peaks[-1][0] - last_peaks[0][0] + 1e-8)
+            trough_slope = (last_troughs[-1][1] - last_troughs[0][1]) / (last_troughs[-1][0] - last_troughs[0][0] + 1e-8)
+            
+            # Симметричный треугольник (сходящиеся линии)
+            if peak_slope < -0.001 and trough_slope > 0.001:
+                patterns_found.append({"type": "Symmetrical Triangle", "signal": 0, "strength": 0.6})
+            # Восходящий треугольник (горизонтальный верх, растущий низ)
+            elif abs(peak_slope) < 0.001 and trough_slope > 0.001:
+                patterns_found.append({"type": "Ascending Triangle", "signal": 1, "strength": 0.7})
+            # Нисходящий треугольник (падающий верх, горизонтальный низ)
+            elif peak_slope < -0.001 and abs(trough_slope) < 0.001:
+                patterns_found.append({"type": "Descending Triangle", "signal": -1, "strength": 0.7})
+
+        # 5. Флаги (Flags) - бычий/медвежий флаг после сильного движения
+        if n > 20:
+            # Определяем сильное движение за последние 10 свечей
+            price_change = (highs[-1] - highs[-10]) / highs[-10]
+            
+            # Бычий флаг (рост > 3%, затем консолидация)
+            if price_change > 0.03:
+                # Проверяем консолидацию: последние 5 свечей в узком диапазоне
+                recent_range = (max(highs[-5:]) - min(lows[-5:])) / lows[-5]
+                if recent_range < 0.015:
+                    patterns_found.append({"type": "Bull Flag", "signal": 1, "strength": 0.65})
+            
+            # Медвежий флаг (падение > 3%, затем консолидация)
+            elif price_change < -0.03:
+                recent_range = (max(highs[-5:]) - min(lows[-5:])) / lows[-5]
+                if recent_range < 0.015:
+                    patterns_found.append({"type": "Bear Flag", "signal": -1, "strength": 0.65})
 
         return patterns_found
 

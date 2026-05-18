@@ -348,8 +348,24 @@ async def main():
                         snapshot_obj
                     )
                     
-                    # TODO: Execute real trade via Binance API
-                    # await binance.place_order(side='BUY', quantity=..., price=current_price)
+                    # Execute real trade via Binance API (if not in SHADOW mode)
+                    if config.get('GENERAL', 'mode') != 'SHADOW_ONLY':
+                        try:
+                            # Calculate quantity based on position size and balance
+                            balance = config.getfloat('GENERAL', 'initial_balance')
+                            usdt_amount = balance * position_info['position_pct'] / 100
+                            quantity = usdt_amount / current_price
+                            
+                            # Place MARKET order for immediate execution
+                            order_result = await binance.place_market_order(side='BUY', quantity=quantity)
+                            logger.info(f"ORDER EXECUTED: {order_result.get('orderId')} | Status: {order_result.get('status')}")
+                            
+                            # Store order ID for tracking
+                            position_manager.active_positions[f"live_{cycle_count}"]["order_id"] = order_result.get('orderId')
+                        except Exception as e:
+                            logger.error(f"Failed to execute order: {e}")
+                            # Remove position if order failed
+                            position_manager.remove_position(f"live_{cycle_count}")
                     
                 else:
                     signal_data['decision'] = 'HOLD'
