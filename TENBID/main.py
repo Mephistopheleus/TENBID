@@ -103,7 +103,7 @@ async def main():
     confidence_sys = ConfidenceSystem(config)
     position_sizer = PositionSizer(config)
     trailing = SmartTrailing(config)
-    shadow = ShadowCalculator(config, db)
+    shadow = ShadowCalculator(config, db, binance_connector=binance)
     autotuner = Autotuner()  # Initialize Autotuner
     reporter = Reporter(db, config)
     position_manager = PositionManager()  # Менеджер позиций
@@ -111,6 +111,9 @@ async def main():
     # Connect to Binance
     await binance.connect()
     logger.info("Connected to Binance API")
+    
+    # Update trading costs for Shadow Calculator
+    await shadow.update_trading_costs(config.get('GENERAL', 'symbol'))
     
     # Warmup - load historical data
     logger.info(f"Warming up with {config.getint('DATA', 'warmup_candles')} candles...")
