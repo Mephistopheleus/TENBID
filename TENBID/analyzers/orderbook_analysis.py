@@ -127,7 +127,20 @@ class OrderbookAnalyzer:
         try:
             # Binance API: depth endpoint
             # limit: 5, 10, 20, 50, 100, 500, 1000, 5000
-            data = self.client.get_order_book(symbol=symbol, limit=limit)
+            # Используем тот же event loop, в котором работает main цикл
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Создаем задачу и ждем её выполнения
+            future = asyncio.run_coroutine_threadsafe(
+                self.client.get_order_book(symbol=symbol, limit=limit),
+                loop
+            )
+            data = future.result(timeout=5)  # Таймаут 5 секунд
             return data
         except Exception:
             return None
