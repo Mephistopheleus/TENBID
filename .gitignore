@@ -1,1 +1,49 @@
-Nothing needs to be added to .gitignore since only a text file (`test.txt`) was added, which appears to be a regular source/config file rather than a build artifact, dependency, or temporary file.
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Virtual environments
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Build artifacts
+dist/
+build/
+target/
+*.out
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Dependencies cache
+.mypy_cache/
+.pytest_cache/
+.npm
+.yarn-cache
+node_modules/
+
+# Distribution archives
+*.tar.gz
+*.zip
+*.whl
+```

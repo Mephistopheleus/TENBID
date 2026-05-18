@@ -220,41 +220,77 @@ class Autotuner:
             current_w = new_weights.get(key.replace('_score', ''), 1.0)
             
             # If winners had significantly higher score in this metric, increase weight
-            if w_diff > 0.1:
-                new_weights[key.replace('_score', '')] = current_w * 1.05
-            elif w_diff < -0.1:
-                new_weights[key.replace('_score', '')] = current_w * 0.95
+            if w_diff > 0.15:
+                new_weights[key.replace('_score', '')] = current_w * 1.08
+            elif w_diff < -0.15:
+                new_weights[key.replace('_score', '')] = current_w * 0.92
         
-        # 2. Shadow Trade Quality Analysis
+        # 2. PnL-Weighted Analysis (not just win/loss)
+        if winners:
+            avg_winner_pnl = np.mean([t.pnl_percent for t in winners])
+            avg_loser_pnl = np.mean([abs(t.pnl_percent) for t in losers]) if losers else 0
+            
+            # If average winner is much bigger than average loser, we're on right track
+            if avg_winner_pnl > avg_loser_pnl * 1.5:
+                logger.info(f"Strong R/R ratio: Winners {avg_winner_pnl:.2f}% vs Losers {avg_loser_pnl:.2f}%")
+                # Boost weights slightly - strategy is working
+                for k in ['regime', 'pattern', 'fractal']:
+                    new_weights[k] = min(3.0, new_weights.get(k, 1.0) * 1.03)
+        
+        # 3. Shadow Trade Quality Analysis
         if shadow_trades:
             shadow_quality_score = len(shadow_prevented_losses) / len(shadow_trades) if shadow_trades else 0
             
             # If shadow trades show we're avoiding many losses, our confidence thresholds are good
-            if shadow_quality_score > 0.6:
+            if shadow_quality_score > 0.65:
                 logger.info(f"Shadow analysis: {shadow_quality_score*100:.1f}% of skipped trades would have lost. Threshold strategy is effective.")
                 # Slightly increase regime weight - our filtering is working
-                new_weights['regime'] = min(3.0, new_weights.get('regime', 2.0) * 1.02)
+                new_weights['regime'] = min(3.0, new_weights.get('regime', 2.0) * 1.03)
             
             # If we're missing too many wins, maybe we're too conservative
-            if len(shadow_missed_wins) > len(shadow_prevented_losses):
+            if len(shadow_missed_wins) > len(shadow_prevented_losses) * 1.2:
                 logger.info(f"Shadow analysis: Missing more wins than preventing losses. Consider lowering thresholds.")
                 # Slightly reduce sl_aggressiveness to allow more trades
-                new_weights['sl_aggressiveness'] = max(0.2, new_weights.get('sl_aggressiveness', 1.0) * 0.98)
+                new_weights['sl_aggressiveness'] = max(0.2, new_weights.get('sl_aggressiveness', 1.0) * 0.97)
         
-        # 3. Analyze SL Failures (The "5% SL" problem)
+        # 4. Analyze SL Failures (The "5% SL" problem)
         # Check losers where max_profit_during_trade was positive but hit SL
         false_breakouts = [t for t in losers if t.max_profit_during_trade > 1.0 and t.exit_reason == 'SL']
-        if len(false_breakouts) > len(losers) * 0.3: # If 30% of losses were wick-outs
-            logger.info("Detected frequent SL wick-outs. Reducing SL aggressiveness.")
-            new_weights['sl_aggressiveness'] *= 0.9  # Make SL wider
-            new_weights['size_confidence'] *= 0.95   # Reduce size slightly to compensate risk
-
-        # 4. Regime Specific Tuning
+        if len(false_breakouts) > len(losers) * 0.25: # If 25% of losses were wick-outs
+            logger.info(f"Wick-out alert: {len(false_breakouts)}/{len(losers)} losses were false breakouts. Widening SL.")
+            new_weights['sl_aggressiveness'] *= 0.88  # Make SL wider
+            new_weights['size_confidence'] *= 0.93   # Reduce size slightly to compensate risk
+        
+        # 5. Consecutive Loss Analysis (Drawdown Control)
+        # Check for streaks of losses
+        sorted_history = sorted(history, key=lambda x: x.timestamp, reverse=True)
+        consecutive_losses = 0
+        max_consecutive_losses = 0
+        for t in sorted_history:
+            if not t.is_shadow and not t.is_winner:
+                consecutive_losses += 1
+                max_consecutive_losses = max(max_consecutive_losses, consecutive_losses)
+            else:
+                consecutive_losses = 0
+        
+        if max_consecutive_losses >= 4:
+            logger.warning(f"Detected {max_consecutive_losses} consecutive losses. Reducing risk exposure.")
+            new_weights['size_confidence'] *= 0.85  # Significantly reduce position size
+            new_weights['sl_aggressiveness'] *= 0.95  # Slightly tighter SL
+        
+        # 6. Regime Specific Tuning
         # If we lose often in 'RANGING', reduce weight of Trend indicators in ranging markets
         regime_losers = [t for t in losers if t.regime_type == 'RANGING']
-        if len(regime_losers) > len(losers) * 0.4:
-            logger.info("High loss rate in RANGING regime. Reducing trend indicator weights.")
-            new_weights['trend'] = max(0.5, new_weights.get('trend', 1.0) * 0.9)
+        if len(regime_losers) > len(losers) * 0.35:
+            logger.info(f"High loss rate in RANGING ({len(regime_losers)}/{len(losers)}). Reducing trend indicator weights.")
+            new_weights['trend'] = max(0.5, new_weights.get('trend', 1.0) * 0.88)
+        
+        # 7. Pattern-Specific Analysis
+        # If pattern analyzer shows high confidence but loses, reduce its weight
+        pattern_losers = [t for t in losers if t.pattern_score > 0.7]
+        if len(pattern_losers) > len(losers) * 0.3:
+            logger.info("Pattern failures detected. Reducing pattern analyzer weight.")
+            new_weights['pattern'] = max(0.8, new_weights.get('pattern', 1.4) * 0.9)
         
         # Clamp weights to reasonable bounds
         for k in new_weights:
@@ -262,6 +298,13 @@ class Autotuner:
                 new_weights[k] = max(0.5, min(3.0, new_weights[k]))
             else:
                 new_weights[k] = max(0.2, min(2.0, new_weights[k]))
+        
+        # Log significant changes
+        for k in new_weights:
+            old_val = self.current_weights.get(k, 1.0)
+            new_val = new_weights[k]
+            if abs(new_val - old_val) / old_val > 0.05:  # More than 5% change
+                logger.info(f"Weight '{k}': {old_val:.2f} -> {new_val:.2f} ({(new_val/old_val-1)*100:+.1f}%)")
 
         return new_weights
 
