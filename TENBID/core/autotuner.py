@@ -292,6 +292,28 @@ class Autotuner:
             logger.info("Pattern failures detected. Reducing pattern analyzer weight.")
             new_weights['pattern'] = max(0.8, new_weights.get('pattern', 1.4) * 0.9)
         
+        # 8. BTC Correlation Analysis
+        # If BTC correlation is high but we lose, reduce btc_correlation weight
+        btc_losers = [t for t in losers if abs(t.btc_correlation) > 0.7]
+        if len(btc_losers) > len(losers) * 0.3:
+            logger.info("BTC correlation failures detected. Reducing BTC weight.")
+            new_weights['btc_correlation'] = max(0.5, new_weights.get('btc_correlation', 1.5) * 0.9)
+        
+        # 9. Orderbook Divergence Analysis
+        # If orderbook score disagrees with outcome frequently, adjust weight
+        ob_wrong = [t for t in real_trades if (t.orderbook_score > 0.5 and not t.is_winner) or 
+                                           (t.orderbook_score < -0.5 and t.is_winner)]
+        if len(ob_wrong) > len(real_trades) * 0.4:
+            logger.info("Orderbook analysis often wrong. Reducing orderbook weight.")
+            new_weights['orderbook'] = max(0.5, new_weights.get('orderbook', 1.2) * 0.88)
+        
+        # 10. Fractal Support/Resistance Quality
+        # If fractal levels fail to hold (price goes through SL quickly), adjust
+        fractal_failures = [t for t in losers if t.max_drawdown_during_trade > abs(t.pnl_percent) * 1.5]
+        if len(fractal_failures) > len(losers) * 0.25:
+            logger.info("Fractal levels failing frequently. Reducing fractal weight.")
+            new_weights['fractal'] = max(0.6, new_weights.get('fractal', 1.3) * 0.9)
+        
         # Clamp weights to reasonable bounds
         for k in new_weights:
             if k != 'sl_aggressiveness' and k != 'size_confidence':

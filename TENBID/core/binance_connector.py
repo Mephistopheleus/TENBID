@@ -10,18 +10,18 @@ logger = logging.getLogger(__name__)
 
 class BinanceConnector:
     def __init__(self, config):
-        self.mode = config.get('GENERAL', 'mode')
+        self.mode = config.get('BINANCE', 'TRADING_MODE')
         if self.mode == 'TESTNET':
-            self.api_key = config.get('BINANCE_TESTNET', 'api_key')
-            self.secret_key = config.get('BINANCE_TESTNET', 'secret_key')
-            self.base_url = config.get('BINANCE_TESTNET', 'base_url')
+            self.api_key = config.get('BINANCE', 'TESTNET_API_KEY')
+            self.secret_key = config.get('BINANCE', 'TESTNET_SECRET_KEY')
+            self.base_url = config.get('BINANCE', 'TESTNET_BASE_URL')
         else:
-            self.api_key = config.get('BINANCE_LIVE', 'api_key')
-            self.secret_key = config.get('BINANCE_LIVE', 'secret_key')
-            self.base_url = config.get('BINANCE_LIVE', 'base_url')
+            self.api_key = config.get('BINANCE', 'LIVE_API_KEY')
+            self.secret_key = config.get('BINANCE', 'LIVE_SECRET_KEY')
+            self.base_url = config.get('BINANCE', 'LIVE_BASE_URL')
         
         self.session = None
-        self.symbol = config.get('GENERAL', 'symbol')
+        self.symbol = config.get('TRADING', 'SYMBOL')
     
     async def connect(self):
         self.session = aiohttp.ClientSession()
