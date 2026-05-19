@@ -344,15 +344,133 @@ class Autotuner:
         count = len(trades)
         return {k: v/count for k, v in sums.items()}
 
-    def _save_weights(self, weights: Dict[str, float], sample_size: int):
+    def integrate_lab_insights(self, lab_results: List[Dict]):
+        """
+        Интеграция результатов из Shadow Lab.
+        Анализирует виртуальные сделки и корректирует веса на основе их успешности.
+        
+        Args:
+            lab_results: Список словарей с результатами симуляций от ShadowLab
+        """
+        if not lab_results:
+            return None
+            
+        logger.info(f"🧠 Autotuner: Получено {len(lab_results)} инсайтов от Shadow Lab")
+        
+        # Группируем результаты по гипотезам
+        hypothesis_stats = {}
+        for res in lab_results:
+            hyp_name = res.get('hypothesis_name')
+            if hyp_name not in hypothesis_stats:
+                hypothesis_stats[hyp_name] = {'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'count': 0}
+            
+            if res.get('decision') == 'ENTERED':
+                pnl = res.get('net_pnl', 0.0)
+                hypothesis_stats[hyp_name]['total_pnl'] += pnl
+                hypothesis_stats[hyp_name]['count'] += 1
+                if pnl > 0:
+                    hypothesis_stats[hyp_name]['wins'] += 1
+                else:
+                    hypothesis_stats[hyp_name]['losses'] += 1
+        
+        new_weights = self.current_weights.copy()
+        changes_made = False
+        
+        # Анализируем каждую гипотезу
+        for hyp_name, stats in hypothesis_stats.items():
+            if stats['count'] < 3:  # Нужно минимум 3 сделки для статистики
+                continue
+                
+            win_rate = stats['wins'] / stats['count']
+            avg_pnl = stats['total_pnl'] / stats['count']
+            
+            logger.info(f"Гипотеза [{hyp_name}]: Сделок={stats['count']}, WinRate={win_rate:.2f}, AvgPnL={avg_pnl:.4f}")
+            
+            # Применяем изменения в зависимости от типа гипотезы
+            if hyp_name == "lower_entry_threshold":
+                # Если снижение порога дало прибыль - снижаем порог входа
+                if win_rate > 0.55 and avg_pnl > 0:
+                    logger.info("✅ Гипотеза подтверждена: можно снизить порог входа")
+                    new_weights['size_confidence'] = min(2.0, new_weights.get('size_confidence', 1.0) * 1.05)
+                    changes_made = True
+                elif win_rate < 0.40:
+                    logger.info("❌ Гипотеза опровергнута: снижение порога ведет к убыткам")
+                    new_weights['size_confidence'] = max(0.5, new_weights.get('size_confidence', 1.0) * 0.95)
+                    changes_made = True
+                    
+            elif hyp_name == "wider_stop_loss":
+                # Если широкий стоп улучшил результаты
+                if win_rate > 0.50 or avg_pnl > 0.001:
+                    logger.info("✅ Широкий стоп улучшает результаты")
+                    new_weights['sl_aggressiveness'] = max(0.5, new_weights.get('sl_aggressiveness', 1.0) * 0.95)
+                    changes_made = True
+                else:
+                    logger.info("❌ Широкий стоп не помог")
+                    new_weights['sl_aggressiveness'] = min(2.0, new_weights.get('sl_aggressiveness', 1.0) * 1.02)
+                    changes_made = True
+                    
+            elif hyp_name == "tighter_take_profit":
+                # Если быстрый тейк лучше
+                if win_rate > 0.60:
+                    logger.info("✅ Быстрая фиксация прибыли работает")
+                    # Можно добавить параметр take_profit_aggressiveness в будущем
+                else:
+                    logger.info("❌ Ранний выход уменьшает прибыль")
+                    
+            elif hyp_name == "factor_weight_boost":
+                # Если учет слабых факторов помог
+                if win_rate > 0.55 and avg_pnl > 0:
+                    logger.info("✅ Учет слабых факторов полезен")
+                    for key in ['btc_correlation', 'fractal', 'orderbook']:
+                        new_weights[key] = min(3.0, new_weights.get(key, 1.0) * 1.03)
+                        changes_made = True
+            
+            # Обработка динамических гипотез вида "boost_{factor_name}_weight"
+            elif hyp_name.startswith("boost_") and hyp_name.endswith("_weight"):
+                factor_name = hyp_name.replace("boost_", "").replace("_weight", "")
+                
+                if win_rate > 0.60 and avg_pnl > 0:
+                    logger.info(f"✅ Динамическая гипотеза подтверждена: фактор {factor_name} заслуживает повышения веса")
+                    
+                    # Маппинг имени фактора на ключ в весах
+                    weight_key_map = {
+                        'btc_correlation': 'btc_correlation',
+                        'fractal_score': 'fractal',
+                        'orderbook_score': 'orderbook',
+                        'pattern_score': 'pattern',
+                        'regime_score': 'regime'
+                    }
+                    
+                    weight_key = weight_key_map.get(factor_name, factor_name)
+                    if weight_key in new_weights or weight_key in ['btc_correlation', 'fractal', 'orderbook', 'pattern', 'regime']:
+                        new_weights[weight_key] = min(3.0, new_weights.get(weight_key, 1.0) * 1.05)
+                        changes_made = True
+                        logger.info(f"📈 Вес фактора '{weight_key}' увеличен на 5%")
+                    else:
+                        logger.debug(f"Фактор {factor_name} не найден в весах, пропускаем")
+                else:
+                    logger.info(f"❌ Динамическая гипотеза для {factor_name} не подтвердилась")
+        
+        # Сохраняем обновленные веса если были изменения
+        if changes_made:
+            self.current_weights = new_weights
+            self._save_weights(new_weights, len(lab_results), source="shadow_lab")
+            logger.info("🎯 Веса обновлены на основе данных Shadow Lab")
+            return new_weights
+        
+        return None
+
+    def _save_weights(self, weights: Dict[str, float], sample_size: int, source: str = "regular"):
+        """Сохраняет веса в БД с указанием источника (обычный или из лаборатории)."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO autotuner_logs (timestamp, weights_json, sample_size)
-                VALUES (?, ?, ?)
-            """, (datetime.now().timestamp(), json.dumps(weights), sample_size))
+                INSERT INTO autotuner_logs (timestamp, weights_json, sample_size, source)
+                VALUES (?, ?, ?, ?)
+            """, (datetime.now().timestamp(), json.dumps(weights), sample_size, source))
             conn.commit()
+            logger.debug(f"Weights saved (source: {source})")
         except Exception as e:
             logger.error(f"Failed to save weights: {e}")
         finally:
@@ -404,7 +522,8 @@ def init_autotuner_db(db_path: str = "trade_history.db"):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp REAL,
         weights_json TEXT,
-        sample_size INTEGER
+        sample_size INTEGER,
+        source TEXT DEFAULT 'regular'
     )
     """)
     

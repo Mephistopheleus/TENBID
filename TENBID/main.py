@@ -29,6 +29,7 @@ from confidence.confidence_system import ConfidenceSystem
 from trading.position_sizer import PositionSizer
 from trading.smart_trailing import SmartTrailing
 from shadow.shadow_calculator import ShadowCalculator
+from shadow.shadow_lab import ShadowLab
 from core.autotuner import Autotuner, init_autotuner_db, TradeContextSnapshot
 from reports.reporter import Reporter
 
@@ -105,8 +106,13 @@ async def main():
     trailing = SmartTrailing(config)
     shadow = ShadowCalculator(config, db, binance_connector=binance)
     autotuner = Autotuner()  # Initialize Autotuner
+    shadow_lab = ShadowLab(db.db_path)  # Initialize Shadow Lab
     reporter = Reporter(db, config)
     position_manager = PositionManager()  # Менеджер позиций
+    
+    # Запуск Shadow Lab в фоновом режиме
+    lab_task = asyncio.create_task(shadow_lab.start(interval=120))  # Проверка каждые 2 минуты
+    logger.info("🔬 Shadow Lab запущена в фоновом режиме")
     
     # Connect to Binance
     await binance.connect()
@@ -392,7 +398,14 @@ async def main():
             if cycle_count % 10 == 0:
                 logger.info("Running Autotuner optimization...")
                 new_weights = autotuner.analyze_and_optimize()
-                logger.info(f"Autotuner weights updated: {new_weights}")
+                
+                # Интеграция инсайтов от Shadow Lab
+                lab_insights = shadow_lab.get_latest_insights()
+                if lab_insights:
+                    logger.info(f"🧠 Получено {len(lab_insights)} инсайтов от Shadow Lab")
+                    autotuner.integrate_lab_insights(lab_insights)
+                
+                logger.info(f"Autotuner weights updated: {autotuner.current_weights}")
             
             # Generate report every 5 minutes
             if (datetime.now() - last_report_time).seconds >= 300:
@@ -413,6 +426,21 @@ async def main():
     except Exception as e:
         logger.error(f"Critical error: {e}", exc_info=True)
     finally:
+        # Остановка Shadow Lab
+        logger.info("⏹️ Остановка Shadow Lab...")
+        shadow_lab.stop()
+        lab_task.cancel()
+        try:
+            await lab_task
+        except asyncio.CancelledError:
+            pass
+        
+        # Интеграция последних инсайтов из лаборатории перед закрытием
+        lab_insights = shadow_lab.get_latest_insights()
+        if lab_insights:
+            logger.info(f"🧠 Интеграция {len(lab_insights)} последних инсайтов от Shadow Lab")
+            autotuner.integrate_lab_insights(lab_insights)
+        
         # Final report
         final_report = reporter.generate_report()
         logger.info("\\n" + "="*60)
