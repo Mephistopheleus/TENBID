@@ -1465,3 +1465,61 @@ AttributeError: 'tuple' object has no attribute 'iloc'
 2026-05-19 03:40:13 | INFO     | Avg Trade PnL: N/A
 2026-05-19 03:40:13 | INFO     | ============================================================
 2026-05-19 03:40:13 | INFO     | TENBID shutdown complete
+2026-05-19 04:49:28 | INFO     | ============================================================
+2026-05-19 04:49:28 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 04:49:28 | INFO     | Mode: TESTNET
+2026-05-19 04:49:28 | INFO     | Symbol: DOGEUSDT
+2026-05-19 04:49:28 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 04:49:28 | INFO     | ============================================================
+2026-05-19 04:49:28 | INFO     | Connected to Binance API
+2026-05-19 04:49:28 | INFO     | Warming up with 300 candles...
+2026-05-19 04:49:29 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 04:49:29 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 04:49:34 | INFO     | [CYCLE_1] HOLD | Confidence: 0.502 < 0.712
+2026-05-19 04:49:34 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-19 04:49:48 | INFO     | \n============================================================
+2026-05-19 04:49:48 | INFO     | FINAL SESSION REPORT
+2026-05-19 04:49:48 | INFO     | ============================================================
+2026-05-19 04:49:48 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-19 04:49:48 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-19 04:49:48 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-19 04:49:48 | INFO     | Total Signals: 2
+2026-05-19 04:49:48 | INFO     | Open Decisions: 0
+2026-05-19 04:49:48 | INFO     | Hold Decisions: 2
+2026-05-19 04:49:48 | INFO     | Total Trades: 0
+2026-05-19 04:49:48 | INFO     | Winning Trades: 0
+2026-05-19 04:49:48 | INFO     | Losing Trades: 0
+2026-05-19 04:49:48 | INFO     | Winrate: 0.0%
+2026-05-19 04:49:48 | INFO     | Shadow Winrate: 50.0%
+2026-05-19 04:49:48 | INFO     | Avg Trade PnL: N/A
+2026-05-19 04:49:48 | INFO     | ============================================================
+2026-05-19 04:49:48 | INFO     | TENBID shutdown complete
+2026-05-19 05:07:36 | INFO     | ============================================================
+2026-05-19 05:07:36 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 05:07:36 | INFO     | Mode: TESTNET
+2026-05-19 05:07:36 | INFO     | Symbol: DOGEUSDT
+2026-05-19 05:07:36 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 05:07:36 | INFO     | ============================================================
+2026-05-19 05:07:36 | INFO     | Connected to Binance API
+2026-05-19 05:07:36 | INFO     | Warming up with 300 candles...
+2026-05-19 05:07:36 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 05:07:36 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 05:07:41 | INFO     | [CYCLE_1] HOLD | Confidence: 0.505 < 0.713
+2026-05-19 05:07:41 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-19 05:07:55 | INFO     | \n============================================================
+2026-05-19 05:07:55 | INFO     | FINAL SESSION REPORT
+2026-05-19 05:07:55 | INFO     | ============================================================
+2026-05-19 05:07:55 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-19 05:07:55 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-19 05:07:55 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-19 05:07:55 | INFO     | Total Signals: 3
+2026-05-19 05:07:55 | INFO     | Open Decisions: 0
+2026-05-19 05:07:55 | INFO     | Hold Decisions: 3
+2026-05-19 05:07:55 | INFO     | Total Trades: 0
+2026-05-19 05:07:55 | INFO     | Winning Trades: 0
+2026-05-19 05:07:55 | INFO     | Losing Trades: 0
+2026-05-19 05:07:55 | INFO     | Winrate: 0.0%
+2026-05-19 05:07:55 | INFO     | Shadow Winrate: 66.7%
+2026-05-19 05:07:55 | INFO     | Avg Trade PnL: N/A
+2026-05-19 05:07:55 | INFO     | ============================================================
+2026-05-19 05:07:55 | INFO     | TENBID shutdown complete
