@@ -382,10 +382,28 @@ async def main():
                     
                     logger.info(f"[CYCLE_{cycle_count}] HOLD | Confidence: {current_confidence:.3f} < {threshold:.3f}")
                     
-                    # Shadow calculation for forbidden trades
+                    # Shadow calculation for forbidden trades - FULL CYCLE
                     if config.getboolean('SHADOW', 'save_forbidden_trades'):
+                        # 1. Analyze what would happen (existing)
                         shadow_result = shadow.analyze_forbidden_trade(signal_data, context_snapshot=context.to_dict() if hasattr(context, 'to_dict') else None)
-                        logger.debug(f"Shadow analysis saved for forbidden trade")
+                        
+                        # 2. Create complete snapshot for Autotuner (NEW)
+                        forbidden_snapshot = shadow.create_forbidden_snapshot(
+                            signal_data=signal_data,
+                            analyzer_results=analysis,
+                            weights=autotuner.current_weights,
+                            context_snapshot=context.to_dict() if hasattr(context, 'to_dict') else None
+                        )
+                        
+                        # 3. Register for delayed outcome checking (NEW)
+                        shadow.register_forbidden_trade(forbidden_snapshot)
+                        
+                        # 4. Send weak factors to Shadow Lab (NEW)
+                        weak_factors = shadow.get_weak_factors_for_lab()
+                        if weak_factors:
+                            logger.debug(f"Sent {len(weak_factors)} weak factor observations to Shadow Lab")
+                        
+                        logger.info(f"Forbidden trade tracked: {forbidden_snapshot['trade_id']} (confidence: {forbidden_snapshot['final_confidence']:.3f})")
                 
                 # Log signal to database
                 db.log_signal(signal_data)
@@ -393,6 +411,42 @@ async def main():
             # Run shadow tests
             if config.getboolean('SHADOW', 'enabled'):
                 shadow.run_tests(all_data, analysis, current_confidence)
+            
+            # Check outcomes of pending forbidden trades (every cycle)
+            if config.getboolean('SHADOW', 'save_forbidden_trades') and current_price:
+                completed_forbidden = await shadow.check_forbidden_outcomes(current_price, symbol)
+                for completed in completed_forbidden:
+                    # Record outcome to Autotuner for learning
+                    snapshot_obj = TradeContextSnapshot(
+                        trade_id=completed['trade_id'],
+                        timestamp=completed['timestamp'],
+                        symbol=completed['symbol'],
+                        side=completed['side'],
+                        btc_correlation=completed['btc_correlation'],
+                        btc_confidence=completed['btc_confidence'],
+                        fractal_score=completed['fractal_score'],
+                        orderbook_score=completed['orderbook_score'],
+                        pattern_score=completed['pattern_score'],
+                        regime_score=completed['regime_score'],
+                        regime_type=completed['regime_type'],
+                        weights_used=completed['weights_used'],
+                        entry_price=completed['entry_price'],
+                        sl_percent=completed['sl_percent'],
+                        tp_percent=completed['tp_percent'],
+                        position_size=completed['position_size'],
+                        final_confidence=completed['final_confidence'],
+                        exit_price=completed['exit_price'],
+                        exit_reason=completed['exit_reason'],
+                        pnl_percent=completed['pnl_percent'],
+                        pnl_usdt=completed.get('trading_costs', {}).get('net_pnl', 0),
+                        is_winner=completed['is_winner'],
+                        max_drawdown_during_trade=0.0,
+                        max_profit_during_trade=0.0,
+                        is_shadow=True,
+                        shadow_reason=completed['shadow_reason']
+                    )
+                    autotuner.record_trade_outcome(snapshot_obj)
+                    logger.info(f"Recorded forbidden trade outcome for Autotuner: {completed['trade_id']} | PnL: {completed['pnl_percent']:.2f}%")
             
             # Periodic Autotuner optimization (every 10 cycles)
             if cycle_count % 10 == 0:

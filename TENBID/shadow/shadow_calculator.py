@@ -1,8 +1,12 @@
-"""Shadow Calculator - parallel calculations for forbidden trades and hypothesis testing"""
+"""
+Shadow Calculator - parallel calculations for forbidden trades and hypothesis testing
+Full cycle tracking: creates snapshots, tracks outcomes of forbidden trades
+"""
 import json
-from datetime import datetime
-from typing import Dict, Any, Optional
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +18,17 @@ class ShadowCalculator:
         self.tests = config.get_list('SHADOW', 'tests')
         self.save_forbidden = config.getboolean('SHADOW', 'save_forbidden_trades', fallback=True)
         
+        # Tracking forbidden trades for delayed outcome analysis
+        self.pending_forbidden_trades = {}  # signal_id -> trade_data
+        self.outcome_check_delay = config.getint('SHADOW', 'outcome_check_delay', fallback=5)  # candles
+        
         # Real trading costs (will be populated from API)
         self.commission_rates = {'maker': 0.0002, 'taker': 0.0004}
         self.slippage_estimate = 0.001  # Default 0.1%
         self.spread_estimate = 0.0005   # Default 0.05%
+        
+        # Weak factors tracking for Shadow Lab
+        self.weak_factors_buffer = []  # Factors with confidence < 0.25 for lab analysis
         
     async def update_trading_costs(self, symbol=None):
         """Update real trading costs from Binance API"""
@@ -259,4 +270,197 @@ class ShadowCalculator:
         trade_type = "SHADOW" if is_shadow else "REAL"
         logger.debug(f"Created {trade_type} trade snapshot: {snapshot['trade_id']}")
         return snapshot
+
+
+    def create_forbidden_snapshot(self, signal_data: Dict[str, Any], analyzer_results: Dict[str, Any],
+                                  weights: Dict[str, float], context_snapshot: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Create a complete snapshot for a FORBIDDEN trade (HOLD decision).
+        This snapshot will be tracked and checked later for outcome.
+        
+        Args:
+            signal_data: Signal data with confidence, threshold, prices
+            analyzer_results: Results from all analyzers
+            weights: Weights used for the decision (from Autotuner)
+            context_snapshot: Context at the time of decision
+        
+        Returns:
+            Snapshot dict ready for tracking and future outcome analysis
+        """
+        hyp_entry = signal_data.get('prices', {}).get('current', 0)
+        base_sl_pct = 0.02  # 2% default
+        base_tp_pct = 0.04  # 4% default (2:1 RR)
+        
+        snapshot = {
+            'trade_id': f"forbidden_{datetime.now().timestamp()}",
+            'timestamp': datetime.now().timestamp(),
+            'symbol': signal_data.get('symbol', 'UNKNOWN'),
+            'side': signal_data.get('side', 'BUY'),
+            
+            # Analyzer Scores at entry
+            'btc_correlation': analyzer_results.get('btc', {}).get('correlation', 0.0),
+            'btc_confidence': analyzer_results.get('btc', {}).get('confidence', 0.0),
+            'fractal_score': analyzer_results.get('fractal', {}).get('confidence', 0.0),
+            'orderbook_score': analyzer_results.get('orderbook', {}).get('confidence', 0.0),
+            'pattern_score': analyzer_results.get('pattern', {}).get('confidence', 0.0),
+            'regime_score': analyzer_results.get('regime', {}).get('confidence', 0.0),
+            'regime_type': analyzer_results.get('regime', {}).get('type', 'UNKNOWN'),
+            
+            # System Weights used
+            'weights_used': weights,
+            
+            # Decision Parameters
+            'entry_price': hyp_entry,
+            'sl_percent': base_sl_pct,
+            'tp_percent': base_tp_pct,
+            'position_size': signal_data.get('position', {}).get('position_size', 0.0),
+            'final_confidence': signal_data.get('confidence', 0.0),
+            
+            # Shadow trade tracking
+            'is_shadow': True,
+            'shadow_reason': signal_data.get('reason', 'LOW_CONFIDENCE'),
+            
+            # Outcome placeholders (to be filled later)
+            'exit_price': None,
+            'exit_reason': None,
+            'pnl_percent': 0.0,
+            'pnl_usdt': 0.0,
+            'is_winner': False,
+            
+            # Market Context during trade (to be filled later)
+            'max_drawdown_during_trade': 0.0,
+            'max_profit_during_trade': 0.0,
+            
+            # Tracking metadata
+            'candles_to_check': self.outcome_check_delay,
+            'status': 'PENDING_OUTCOME',
+            'context_at_entry': context_snapshot
+        }
+        
+        # Extract weak factors for Shadow Lab
+        weak_factors = {}
+        for factor_name in ['btc_correlation', 'fractal_score', 'orderbook_score', 'pattern_score', 'regime_score']:
+            factor_value = snapshot.get(factor_name, 0.0)
+            if 0.05 < abs(factor_value) < 0.25:
+                weak_factors[factor_name] = factor_value
+        
+        if weak_factors:
+            snapshot['weak_factors'] = weak_factors
+            self.weak_factors_buffer.append({
+                'timestamp': datetime.now().isoformat(),
+                'trade_id': snapshot['trade_id'],
+                'weak_factors': weak_factors,
+                'total_confidence': snapshot['final_confidence']
+            })
+        
+        logger.info(f"Created forbidden trade snapshot: {snapshot['trade_id']} (confidence: {snapshot['final_confidence']:.3f})")
+        return snapshot
+
+    async def check_forbidden_outcomes(self, current_price: float, symbol: str):
+        """
+        Check outcomes of pending forbidden trades after N candles.
+        Simulates what would have happened if we entered the trade.
+        
+        Args:
+            current_price: Current market price
+            symbol: Trading pair symbol
+        
+        Returns:
+            List of completed forbidden trade snapshots with outcomes
+        """
+        completed_trades = []
+        trades_to_remove = []
+        
+        for trade_id, trade_data in self.pending_forbidden_trades.items():
+            trade_data['candles_to_check'] -= 1
+            
+            # Check if enough candles have passed
+            if trade_data['candles_to_check'] <= 0:
+                # Simulate outcome based on current price vs entry/SL/TP
+                entry = trade_data['entry_price']
+                sl = trade_data['sl_percent'] * entry
+                tp = trade_data['tp_percent'] * entry
+                side = trade_data['side']
+                
+                # Simplified outcome simulation (in real implementation, track high/low)
+                if side.upper() == 'BUY':
+                    if current_price <= entry - sl:
+                        # Hit SL
+                        trade_data['exit_price'] = entry - sl
+                        trade_data['exit_reason'] = 'SL'
+                        trade_data['pnl_percent'] = -trade_data['sl_percent'] * 100
+                        trade_data['is_winner'] = False
+                    elif current_price >= entry + tp:
+                        # Hit TP
+                        trade_data['exit_price'] = entry + tp
+                        trade_data['exit_reason'] = 'TP'
+                        trade_data['pnl_percent'] = trade_data['tp_percent'] * 100
+                        trade_data['is_winner'] = True
+                    else:
+                        # Still running or closed at current price
+                        trade_data['exit_price'] = current_price
+                        trade_data['exit_reason'] = 'SIMULATED_CLOSE'
+                        trade_data['pnl_percent'] = ((current_price - entry) / entry) * 100
+                        trade_data['is_winner'] = current_price > entry
+                else:
+                    # SELL side
+                    if current_price >= entry + sl:
+                        trade_data['exit_price'] = entry + sl
+                        trade_data['exit_reason'] = 'SL'
+                        trade_data['pnl_percent'] = -trade_data['sl_percent'] * 100
+                        trade_data['is_winner'] = False
+                    elif current_price <= entry - tp:
+                        trade_data['exit_price'] = entry - tp
+                        trade_data['exit_reason'] = 'TP'
+                        trade_data['pnl_percent'] = trade_data['tp_percent'] * 100
+                        trade_data['is_winner'] = True
+                    else:
+                        trade_data['exit_price'] = current_price
+                        trade_data['exit_reason'] = 'SIMULATED_CLOSE'
+                        trade_data['pnl_percent'] = ((entry - current_price) / entry) * 100
+                        trade_data['is_winner'] = current_price < entry
+                
+                # Calculate realistic costs
+                cost_analysis = self.calculate_realistic_costs(
+                    entry, trade_data['exit_price'] or current_price,
+                    trade_data['position_size'] or 1, side
+                )
+                trade_data['pnl_percent'] -= cost_analysis['costs_as_pct_of_position'] * 100
+                trade_data['trading_costs'] = cost_analysis
+                
+                trade_data['status'] = 'COMPLETED'
+                completed_trades.append(trade_data)
+                trades_to_remove.append(trade_id)
+                
+                logger.info(f"Forbidden trade {trade_id} completed: {trade_data['exit_reason']} | PnL: {trade_data['pnl_percent']:.2f}%")
+        
+        # Remove completed trades from pending
+        for trade_id in trades_to_remove:
+            del self.pending_forbidden_trades[trade_id]
+        
+        return completed_trades
+
+    def register_forbidden_trade(self, snapshot: Dict[str, Any]):
+        """
+        Register a forbidden trade for delayed outcome checking.
+        
+        Args:
+            snapshot: Trade snapshot from create_forbidden_snapshot()
+        """
+        self.pending_forbidden_trades[snapshot['trade_id']] = snapshot
+        logger.debug(f"Registered forbidden trade for tracking: {snapshot['trade_id']}")
+
+    def get_weak_factors_for_lab(self) -> List[Dict]:
+        """
+        Get weak factors data for Shadow Lab analysis.
+        
+        Returns:
+            List of weak factor observations for hypothesis generation
+        """
+        if not self.weak_factors_buffer:
+            return []
+        
+        data = self.weak_factors_buffer.copy()
+        self.weak_factors_buffer.clear()
+        return data
 
