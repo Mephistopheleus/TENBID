@@ -1929,3 +1929,34 @@ AttributeError: 'tuple' object has no attribute 'iloc'
 2026-05-19 07:18:32 | DEBUG    | Shadow analysis saved for forbidden trade
 2026-05-19 07:19:07 | INFO     | [CYCLE_89] HOLD | Confidence: 0.472 < 0.714
 2026-05-19 07:19:07 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-19 10:29:02 | INFO     | ============================================================
+2026-05-19 10:29:02 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 10:29:02 | INFO     | Mode: TESTNET
+2026-05-19 10:29:02 | INFO     | Symbol: DOGEUSDT
+2026-05-19 10:29:02 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 10:29:02 | INFO     | ============================================================
+2026-05-19 10:29:02 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-19 10:29:02 | INFO     | Connected to Binance API
+2026-05-19 10:29:02 | INFO     | Warming up with 300 candles...
+2026-05-19 10:29:02 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 10:29:02 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 10:29:07 | INFO     | [CYCLE_1] HOLD | Confidence: 0.480 < 0.712
+2026-05-19 10:29:07 | DEBUG    | Shadow analysis saved for forbidden trade
+2026-05-19 10:29:18 | INFO     | ⏹️ Остановка Shadow Lab...
+2026-05-19 10:29:18 | INFO     | \n============================================================
+2026-05-19 10:29:18 | INFO     | FINAL SESSION REPORT
+2026-05-19 10:29:18 | INFO     | ============================================================
+2026-05-19 10:29:18 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-19 10:29:18 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-19 10:29:18 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-19 10:29:18 | INFO     | Total Signals: 1
+2026-05-19 10:29:18 | INFO     | Open Decisions: 0
+2026-05-19 10:29:18 | INFO     | Hold Decisions: 1
+2026-05-19 10:29:18 | INFO     | Total Trades: 0
+2026-05-19 10:29:18 | INFO     | Winning Trades: 0
+2026-05-19 10:29:18 | INFO     | Losing Trades: 0
+2026-05-19 10:29:18 | INFO     | Winrate: 0.0%
+2026-05-19 10:29:18 | INFO     | Shadow Winrate: 0.0%
+2026-05-19 10:29:18 | INFO     | Avg Trade PnL: N/A
+2026-05-19 10:29:18 | INFO     | ============================================================
+2026-05-19 10:29:18 | INFO     | TENBID shutdown complete
