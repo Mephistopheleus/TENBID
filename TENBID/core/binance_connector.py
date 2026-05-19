@@ -148,8 +148,8 @@ class BinanceConnector:
     async def get_account_commission(self, symbol=None):
         """Get trading commission rates for the account (Futures)"""
         try:
-            # Get account trade fees - no symbol parameter needed for this endpoint
-            data = await self._request('GET', '/fapi/v1/account', params={}, signed=True)
+            # Get account trade fees - use v2 endpoint for Testnet compatibility
+            data = await self._request('GET', '/fapi/v2/account', params={}, signed=True)
             
             # Extract commission rates for the specific symbol if available
             if 'symbols' in data and isinstance(data['symbols'], list):

@@ -8,19 +8,16 @@
 *.env.*
 
 # Dependencies
-node_modules/
-venv/
-.venv/
 __pycache__/
-.mypy_cache/
-.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
 
 # Build artifacts
 dist/
 build/
-*.pyc
-*.pyo
-*.pyd
+*.so
+*.egg-info/
 
 # Editors
 .vscode/
@@ -28,14 +25,16 @@ build/
 *.swp
 *.swo
 
-# System
+# OS
 .DS_Store
 Thumbs.db
 
-# Coverage
+# Testing
+.coverage
 coverage/
 htmlcov/
-.coverage
+.pytest_cache/
+.mypy_cache/
 
 # Compressed files
 *.zip
@@ -56,4 +55,8 @@ htmlcov/
 *.Z
 *.lz
 *.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
 ```
