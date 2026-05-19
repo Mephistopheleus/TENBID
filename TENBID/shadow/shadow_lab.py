@@ -30,6 +30,9 @@ class ShadowLab:
         self.is_running = False
         self.results_buffer = []  # Буфер результатов для передачи в автотюнер
         
+        # Weak factors buffer from Shadow Calculator (for dynamic hypothesis generation)
+        self.weak_factors_from_calculator = []
+        
         # Динамические гипотезы генерируются на основе данных
         # Базовый набор остается, но добавляется анализ всех слабых факторов
         self.hypotheses = [
@@ -54,6 +57,17 @@ class ShadowLab:
                 description="Тест учета более слабых факторов влияния"
             )
         ]
+    
+    def receive_weak_factors(self, weak_factors_data: List[Dict]):
+        """
+        Receive weak factors data from Shadow Calculator for analysis.
+        
+        Args:
+            weak_factors_data: List of weak factor observations from shadow_calculator
+        """
+        if weak_factors_data:
+            self.weak_factors_from_calculator.extend(weak_factors_data)
+            logger.info(f"🔬 Shadow Lab received {len(weak_factors_data)} weak factor observations")
     
     def fetch_all_trades_for_analysis(self, limit: int = 100) -> List[Dict]:
         """
@@ -243,9 +257,12 @@ class ShadowLab:
         Генерирует гипотезы на основе анализа слабых факторов в предоставленных сделках.
         Если какой-то фактор (например, btc_correlation) часто был в диапазоне 0.1-0.25
         и сделки с ним были бы прибыльными - создаем гипотезу о повышении его веса.
+        
+        Также использует weak_factors_from_calculator для генерации дополнительных гипотез.
         """
         factor_stats = {}
         
+        # Process trades from DB (existing logic)
         for trade in trades:
             factors = json.loads(trade.get('factors', '{}')) if isinstance(trade.get('factors'), str) else trade.get('factors', {})
             decision = trade.get('decision', 'HOLD')
@@ -281,11 +298,26 @@ class ShadowLab:
                     else:
                         factor_stats[factor_name]['losses'] += 1
         
+        # ALSO process weak factors from Shadow Calculator (NEW)
+        for weak_obs in self.weak_factors_from_calculator:
+            trade_id = weak_obs.get('trade_id', 'unknown')
+            total_confidence = weak_obs.get('total_confidence', 0)
+            weak_factors = weak_obs.get('weak_factors', {})
+            
+            for factor_name, factor_value in weak_factors.items():
+                if factor_name not in factor_stats:
+                    factor_stats[factor_name] = {'wins': 0, 'losses': 0, 'count': 0}
+                
+                factor_stats[factor_name]['count'] += 1
+                # We don't know the outcome yet for fresh observations, 
+                # but we track them for pattern detection
+                # Outcome will be determined when forbidden trade completes
+        
         # Создаем гипотезы для факторов с хорошей статистикой
         dynamic_hyps = []
         for factor_name, stats in factor_stats.items():
             if stats['count'] >= 3:  # Минимум 3 наблюдения
-                win_rate = stats['wins'] / stats['count']
+                win_rate = stats['wins'] / stats['count'] if stats['count'] > 0 else 0
                 
                 if win_rate > 0.60:  # Если фактор в 60%+ случаев приводил к прибыли
                     hyp_name = f"boost_{factor_name}_weight"
