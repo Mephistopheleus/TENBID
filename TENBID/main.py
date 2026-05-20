@@ -185,8 +185,19 @@ async def main():
             # Get adaptive threshold
             threshold = confidence_sys.get_adaptive_threshold(analysis)
             
-            # Получаем текущую цену
+            # Получаем текущую цену и данные свечи для реалистичной симуляции
             current_price = all_data['5m'][0].iloc[-1]['close'] if len(all_data['5m']) > 0 else 0
+            
+            # Extract candle data for realistic simulation (high/low of current candle)
+            candle_data = None
+            if len(all_data['5m']) > 0:
+                latest_candle = all_data['5m'][0].iloc[-1]
+                candle_data = {
+                    'high': latest_candle['high'],
+                    'low': latest_candle['low'],
+                    'open': latest_candle['open'],
+                    'close': latest_candle['close']
+                }
             
             # === УПРАВЛЕНИЕ АКТИВНЫМИ ПОЗИЦИЯМИ ===
             if position_manager.get_active_count() > 0:
@@ -412,9 +423,9 @@ async def main():
             if config.getboolean('SHADOW', 'enabled'):
                 shadow.run_tests(all_data, analysis, current_confidence)
             
-            # Check outcomes of pending forbidden trades (every cycle)
+            # Check outcomes of pending forbidden trades (every cycle) with realistic candle data
             if config.getboolean('SHADOW', 'save_forbidden_trades') and current_price:
-                completed_forbidden = await shadow.check_forbidden_outcomes(current_price, symbol)
+                completed_forbidden = await shadow.check_forbidden_outcomes(current_price, symbol, candle_data)
                 for completed in completed_forbidden:
                     # Record outcome to Autotuner for learning
                     snapshot_obj = TradeContextSnapshot(

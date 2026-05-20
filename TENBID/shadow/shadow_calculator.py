@@ -20,7 +20,10 @@ class ShadowCalculator:
         
         # Tracking forbidden trades for delayed outcome analysis
         self.pending_forbidden_trades = {}  # signal_id -> trade_data
-        self.outcome_check_delay = config.getint('SHADOW', 'outcome_check_delay', fallback=5)  # candles
+        self.outcome_check_delay = config.getint('SHADOW', 'outcome_check_delay', fallback=1)  # candles (reduced for faster learning)
+        
+        # Persist pending trades to DB to survive restarts
+        self.persist_pending = config.getboolean('SHADOW', 'persist_pending', fallback=True)
         
         # Real trading costs (will be populated from API)
         self.commission_rates = {'maker': 0.0002, 'taker': 0.0004}
@@ -356,7 +359,7 @@ class ShadowCalculator:
         logger.info(f"Created forbidden trade snapshot: {snapshot['trade_id']} (confidence: {snapshot['final_confidence']:.3f})")
         return snapshot
 
-    async def check_forbidden_outcomes(self, current_price: float, symbol: str):
+    async def check_forbidden_outcomes(self, current_price: float, symbol: str, candle_data: Optional[Dict] = None):
         """
         Check outcomes of pending forbidden trades after N candles.
         Simulates what would have happened if we entered the trade.
@@ -364,6 +367,7 @@ class ShadowCalculator:
         Args:
             current_price: Current market price
             symbol: Trading pair symbol
+            candle_data: Dict with latest candle data {high, low, close, open} for realistic simulation
         
         Returns:
             List of completed forbidden trade snapshots with outcomes
@@ -372,67 +376,109 @@ class ShadowCalculator:
         trades_to_remove = []
         
         for trade_id, trade_data in self.pending_forbidden_trades.items():
+            # Decrement candle counter
             trade_data['candles_to_check'] -= 1
             
-            # Check if enough candles have passed
+            # Get candle range for realistic simulation
+            candle_high = candle_data.get('high', current_price) if candle_data else current_price
+            candle_low = candle_data.get('low', current_price) if candle_data else current_price
+            
+            # Check if enough candles have passed (horizon reached)
             if trade_data['candles_to_check'] <= 0:
-                # Simulate outcome based on current price vs entry/SL/TP
                 entry = trade_data['entry_price']
-                sl = trade_data['sl_percent'] * entry
-                tp = trade_data['tp_percent'] * entry
-                side = trade_data['side']
+                sl_pct = trade_data['sl_percent']
+                tp_pct = trade_data['tp_percent']
+                side = trade_data['side'].upper()
                 
-                # Simplified outcome simulation (in real implementation, track high/low)
-                if side.upper() == 'BUY':
-                    if current_price <= entry - sl:
-                        # Hit SL
-                        trade_data['exit_price'] = entry - sl
+                # Calculate SL and TP levels
+                if side == 'BUY':
+                    sl_level = entry * (1 - sl_pct / 100)
+                    tp_level = entry * (1 + tp_pct / 100)
+                    
+                    # REALISTIC SIMULATION: Check if price touched SL or TP during candle
+                    # Priority: SL first (risk management), then TP
+                    if candle_low <= sl_level:
+                        # Hit Stop Loss - trade closed at SL
+                        trade_data['exit_price'] = sl_level
                         trade_data['exit_reason'] = 'SL'
-                        trade_data['pnl_percent'] = -trade_data['sl_percent'] * 100
+                        trade_data['pnl_percent'] = -sl_pct
                         trade_data['is_winner'] = False
-                    elif current_price >= entry + tp:
-                        # Hit TP
-                        trade_data['exit_price'] = entry + tp
+                        trade_data['max_drawdown_during_trade'] = -sl_pct
+                        logger.info(f"Forbidden {trade_id}: SL HIT at {sl_level:.6f} (low: {candle_low:.6f})")
+                        
+                    elif candle_high >= tp_level:
+                        # Hit Take Profit - trade closed at TP
+                        trade_data['exit_price'] = tp_level
                         trade_data['exit_reason'] = 'TP'
-                        trade_data['pnl_percent'] = trade_data['tp_percent'] * 100
+                        trade_data['pnl_percent'] = tp_pct
                         trade_data['is_winner'] = True
+                        trade_data['max_profit_during_trade'] = tp_pct
+                        logger.info(f"Forbidden {trade_id}: TP HIT at {tp_level:.6f} (high: {candle_high:.6f})")
+                        
                     else:
-                        # Still running or closed at current price
-                        trade_data['exit_price'] = current_price
-                        trade_data['exit_reason'] = 'SIMULATED_CLOSE'
-                        trade_data['pnl_percent'] = ((current_price - entry) / entry) * 100
-                        trade_data['is_winner'] = current_price > entry
-                else:
-                    # SELL side
-                    if current_price >= entry + sl:
-                        trade_data['exit_price'] = entry + sl
-                        trade_data['exit_reason'] = 'SL'
-                        trade_data['pnl_percent'] = -trade_data['sl_percent'] * 100
-                        trade_data['is_winner'] = False
-                    elif current_price <= entry - tp:
-                        trade_data['exit_price'] = entry - tp
-                        trade_data['exit_reason'] = 'TP'
-                        trade_data['pnl_percent'] = trade_data['tp_percent'] * 100
-                        trade_data['is_winner'] = True
-                    else:
-                        trade_data['exit_price'] = current_price
-                        trade_data['exit_reason'] = 'SIMULATED_CLOSE'
-                        trade_data['pnl_percent'] = ((entry - current_price) / entry) * 100
-                        trade_data['is_winner'] = current_price < entry
+                        # No SL/TP hit - close at current price (simulation end)
+                        exit_price = current_price
+                        trade_data['exit_price'] = exit_price
+                        trade_data['exit_reason'] = 'HORIZON_END'
+                        trade_data['pnl_percent'] = ((exit_price - entry) / entry) * 100
+                        trade_data['is_winner'] = exit_price > entry
+                        
+                        # Track max excursion during trade
+                        if candle_high > entry:
+                            trade_data['max_profit_during_trade'] = ((candle_high - entry) / entry) * 100
+                        if candle_low < entry:
+                            trade_data['max_drawdown_during_trade'] = -((entry - candle_low) / entry) * 100
+                            
+                        logger.info(f"Forbidden {trade_id}: HORIZON END at {exit_price:.6f} | PnL: {trade_data['pnl_percent']:.2f}%")
                 
-                # Calculate realistic costs
+                else:  # SELL
+                    sl_level = entry * (1 + sl_pct / 100)
+                    tp_level = entry * (1 - tp_pct / 100)
+                    
+                    if candle_high >= sl_level:
+                        trade_data['exit_price'] = sl_level
+                        trade_data['exit_reason'] = 'SL'
+                        trade_data['pnl_percent'] = -sl_pct
+                        trade_data['is_winner'] = False
+                        trade_data['max_drawdown_during_trade'] = -sl_pct
+                        logger.info(f"Forbidden {trade_id}: SL HIT at {sl_level:.6f} (high: {candle_high:.6f})")
+                        
+                    elif candle_low <= tp_level:
+                        trade_data['exit_price'] = tp_level
+                        trade_data['exit_reason'] = 'TP'
+                        trade_data['pnl_percent'] = tp_pct
+                        trade_data['is_winner'] = True
+                        trade_data['max_profit_during_trade'] = tp_pct
+                        logger.info(f"Forbidden {trade_id}: TP HIT at {tp_level:.6f} (low: {candle_low:.6f})")
+                        
+                    else:
+                        exit_price = current_price
+                        trade_data['exit_price'] = exit_price
+                        trade_data['exit_reason'] = 'HORIZON_END'
+                        trade_data['pnl_percent'] = ((entry - exit_price) / entry) * 100
+                        trade_data['is_winner'] = exit_price < entry
+                        
+                        if candle_low < entry:
+                            trade_data['max_profit_during_trade'] = ((entry - candle_low) / entry) * 100
+                        if candle_high > entry:
+                            trade_data['max_drawdown_during_trade'] = -((candle_high - entry) / entry) * 100
+                            
+                        logger.info(f"Forbidden {trade_id}: HORIZON END at {exit_price:.6f} | PnL: {trade_data['pnl_percent']:.2f}%")
+                
+                # Calculate realistic costs (commission, slippage, spread)
                 cost_analysis = self.calculate_realistic_costs(
-                    entry, trade_data['exit_price'] or current_price,
-                    trade_data['position_size'] or 1, side
+                    entry, 
+                    trade_data['exit_price'] or current_price,
+                    trade_data['position_size'] or 1, 
+                    side
                 )
+                # Adjust PnL by costs
                 trade_data['pnl_percent'] -= cost_analysis['costs_as_pct_of_position'] * 100
                 trade_data['trading_costs'] = cost_analysis
                 
                 trade_data['status'] = 'COMPLETED'
                 completed_trades.append(trade_data)
                 trades_to_remove.append(trade_id)
-                
-                logger.info(f"Forbidden trade {trade_id} completed: {trade_data['exit_reason']} | PnL: {trade_data['pnl_percent']:.2f}%")
         
         # Remove completed trades from pending
         for trade_id in trades_to_remove:
@@ -443,12 +489,32 @@ class ShadowCalculator:
     def register_forbidden_trade(self, snapshot: Dict[str, Any]):
         """
         Register a forbidden trade for delayed outcome checking.
+        Also persists to database if enabled.
         
         Args:
             snapshot: Trade snapshot from create_forbidden_snapshot()
         """
         self.pending_forbidden_trades[snapshot['trade_id']] = snapshot
-        logger.debug(f"Registered forbidden trade for tracking: {snapshot['trade_id']}")
+        
+        # Persist to database for crash recovery
+        if self.persist_pending:
+            try:
+                self.db.log_shadow_test({
+                    'timestamp': datetime.now().isoformat(),
+                    'test_type': 'forbidden_trade',
+                    'parameters': {
+                        'entry_price': snapshot['entry_price'],
+                        'side': snapshot['side'],
+                        'confidence': snapshot['final_confidence'],
+                        'shadow_reason': snapshot['shadow_reason']
+                    },
+                    'result': {'status': 'PENDING'},
+                    'recommendation_change': 0
+                })
+            except Exception as e:
+                logger.warning(f"Failed to persist forbidden trade to DB: {e}")
+        
+        logger.info(f"Registered forbidden trade for tracking: {snapshot['trade_id']} (confidence: {snapshot['final_confidence']:.3f})")
 
     def get_weak_factors_for_lab(self) -> List[Dict]:
         """
