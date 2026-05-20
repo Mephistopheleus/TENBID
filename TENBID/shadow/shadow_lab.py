@@ -79,10 +79,10 @@ class ShadowLab:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            # Выбираем последние сделки, включая HOLD с пограничными значениями
-            # и реальные сделки для сравнения
+            # Выбираем последние сделки из trade_analysis_log (включая shadow trades)
+            # Эта таблица содержит полные снимки с факторами и весами
             query = """
-                SELECT * FROM trade_history 
+                SELECT * FROM trade_analysis_log 
                 ORDER BY timestamp DESC 
                 LIMIT ?
             """
@@ -95,7 +95,14 @@ class ShadowLab:
             # Фильтруем сделки, где есть слабые факторы
             relevant_trades = []
             for trade in trades:
-                factors = json.loads(trade.get('factors', '{}')) if isinstance(trade.get('factors'), str) else trade.get('factors', {})
+                # Извлекаем факторы из полей btc_correlation, fractal_score и т.д.
+                factors = {
+                    'btc_correlation': trade.get('btc_correlation', 0),
+                    'fractal_score': trade.get('fractal_score', 0),
+                    'orderbook_score': trade.get('orderbook_score', 0),
+                    'pattern_score': trade.get('pattern_score', 0),
+                    'regime_score': trade.get('regime_score', 0)
+                }
                 
                 # Проверяем, есть ли факторы с низким весом
                 has_low_weight_factors = any(
@@ -107,9 +114,12 @@ class ShadowLab:
                 # 1. Есть слабые факторы (для их анализа)
                 # 2. Или это HOLD с уверенностью > 0.4 (упущенные возможности)
                 # 3. Или это реальная сделка (для калибровки)
+                is_shadow = trade.get('is_shadow', False)
+                pnl = trade.get('pnl_percent', 0) or trade.get('pnl_usdt', 0)
+                
                 if (has_low_weight_factors or 
-                    (trade.get('decision') == 'HOLD' and trade.get('total_confidence', 0) > 0.4) or
-                    trade.get('decision') in ['LONG', 'SHORT']):
+                    (is_shadow and pnl is not None) or
+                    (not is_shadow and pnl is not None)):
                     relevant_trades.append(trade)
             
             logger.info(f"Найдено {len(relevant_trades)} релевантных сделок для анализа (из {len(trades)})")

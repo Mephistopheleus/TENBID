@@ -1960,3 +1960,111 @@ AttributeError: 'tuple' object has no attribute 'iloc'
 2026-05-19 10:29:18 | INFO     | Avg Trade PnL: N/A
 2026-05-19 10:29:18 | INFO     | ============================================================
 2026-05-19 10:29:18 | INFO     | TENBID shutdown complete
+2026-05-19 11:59:04 | INFO     | ============================================================
+2026-05-19 11:59:04 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 11:59:04 | INFO     | Mode: TESTNET
+2026-05-19 11:59:04 | INFO     | Symbol: DOGEUSDT
+2026-05-19 11:59:04 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 11:59:04 | INFO     | ============================================================
+2026-05-19 11:59:04 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-19 11:59:04 | INFO     | Connected to Binance API
+2026-05-19 11:59:04 | INFO     | Warming up with 300 candles...
+2026-05-19 11:59:04 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 11:59:04 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 11:59:09 | INFO     | [CYCLE_1] HOLD | Confidence: 0.478 < 0.711
+2026-05-19 11:59:09 | INFO     | Forbidden trade tracked: forbidden_1779191949.609562 (confidence: 0.478)
+2026-05-19 11:59:29 | INFO     | ⏹️ Остановка Shadow Lab...
+2026-05-19 11:59:29 | INFO     | \n============================================================
+2026-05-19 11:59:29 | INFO     | FINAL SESSION REPORT
+2026-05-19 11:59:29 | INFO     | ============================================================
+2026-05-19 11:59:29 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-05-19 11:59:29 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-05-19 11:59:29 | INFO     | Projected Monthly PnL: 0.0%
+2026-05-19 11:59:29 | INFO     | Total Signals: 2
+2026-05-19 11:59:29 | INFO     | Open Decisions: 0
+2026-05-19 11:59:29 | INFO     | Hold Decisions: 2
+2026-05-19 11:59:29 | INFO     | Total Trades: 0
+2026-05-19 11:59:29 | INFO     | Winning Trades: 0
+2026-05-19 11:59:29 | INFO     | Losing Trades: 0
+2026-05-19 11:59:29 | INFO     | Winrate: 0.0%
+2026-05-19 11:59:29 | INFO     | Shadow Winrate: 0.0%
+2026-05-19 11:59:29 | INFO     | Avg Trade PnL: N/A
+2026-05-19 11:59:29 | INFO     | ============================================================
+2026-05-19 11:59:29 | INFO     | TENBID shutdown complete
+2026-05-19 12:00:49 | INFO     | ============================================================
+2026-05-19 12:00:49 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 12:00:49 | INFO     | Mode: TESTNET
+2026-05-19 12:00:49 | INFO     | Symbol: DOGEUSDT
+2026-05-19 12:00:49 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 12:00:49 | INFO     | ============================================================
+2026-05-19 12:00:49 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-19 12:00:49 | INFO     | Connected to Binance API
+2026-05-19 12:00:50 | INFO     | Warming up with 300 candles...
+2026-05-19 12:00:50 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 12:00:50 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 12:00:55 | INFO     | [CYCLE_1] HOLD | Confidence: 0.472 < 0.709
+2026-05-19 12:00:55 | INFO     | Forbidden trade tracked: forbidden_1779192055.449472 (confidence: 0.472)
+2026-05-19 12:02:13 | INFO     | ============================================================
+2026-05-19 12:02:13 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 12:02:13 | INFO     | Mode: TESTNET
+2026-05-19 12:02:13 | INFO     | Symbol: DOGEUSDT
+2026-05-19 12:02:13 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 12:02:13 | INFO     | ============================================================
+2026-05-19 12:02:13 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-19 12:02:13 | INFO     | Connected to Binance API
+2026-05-19 12:02:14 | INFO     | Warming up with 300 candles...
+2026-05-19 12:02:14 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 12:02:14 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 12:02:19 | INFO     | [CYCLE_1] HOLD | Confidence: 0.472 < 0.709
+2026-05-19 12:02:19 | INFO     | Forbidden trade tracked: forbidden_1779192139.509451 (confidence: 0.472)
+2026-05-19 12:02:54 | INFO     | [CYCLE_2] HOLD | Confidence: 0.472 < 0.709
+2026-05-19 12:02:54 | INFO     | Forbidden trade tracked: forbidden_1779192174.628753 (confidence: 0.472)
+2026-05-19 12:19:55 | INFO     | ============================================================
+2026-05-19 12:19:55 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 12:19:55 | INFO     | Mode: TESTNET
+2026-05-19 12:19:55 | INFO     | Symbol: DOGEUSDT
+2026-05-19 12:19:55 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 12:19:55 | INFO     | ============================================================
+2026-05-19 12:19:55 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-19 12:19:55 | INFO     | Connected to Binance API
+2026-05-19 12:19:56 | INFO     | Warming up with 300 candles...
+2026-05-19 12:19:56 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 12:19:56 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 12:20:01 | INFO     | [CYCLE_1] HOLD | Confidence: 0.480 < 0.710
+2026-05-19 12:20:01 | INFO     | Forbidden trade tracked: forbidden_1779193201.423774 (confidence: 0.480)
+2026-05-19 12:20:33 | INFO     | ============================================================
+2026-05-19 12:20:33 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 12:20:33 | INFO     | Mode: TESTNET
+2026-05-19 12:20:33 | INFO     | Symbol: DOGEUSDT
+2026-05-19 12:20:33 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 12:20:33 | INFO     | ============================================================
+2026-05-19 12:20:33 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-19 12:20:34 | INFO     | Connected to Binance API
+2026-05-19 12:20:34 | INFO     | Warming up with 300 candles...
+2026-05-19 12:20:34 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 12:20:34 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 12:20:39 | INFO     | [CYCLE_1] HOLD | Confidence: 0.469 < 0.709
+2026-05-19 12:20:39 | INFO     | Forbidden trade tracked: forbidden_1779193239.489454 (confidence: 0.469)
+2026-05-19 12:21:14 | INFO     | [CYCLE_2] HOLD | Confidence: 0.474 < 0.709
+2026-05-19 12:21:14 | INFO     | Forbidden trade tracked: forbidden_1779193274.609147 (confidence: 0.474)
+2026-05-19 12:21:57 | INFO     | ============================================================
+2026-05-19 12:21:57 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-19 12:21:57 | INFO     | Mode: TESTNET
+2026-05-19 12:21:57 | INFO     | Symbol: DOGEUSDT
+2026-05-19 12:21:57 | INFO     | Initial Balance: 200.0 USDT
+2026-05-19 12:21:57 | INFO     | ============================================================
+2026-05-19 12:21:57 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-19 12:21:57 | INFO     | Connected to Binance API
+2026-05-19 12:21:57 | INFO     | Warming up with 300 candles...
+2026-05-19 12:21:57 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-19 12:21:57 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-19 12:22:02 | INFO     | [CYCLE_1] HOLD | Confidence: 0.475 < 0.709
+2026-05-19 12:22:02 | INFO     | Forbidden trade tracked: forbidden_1779193322.80937 (confidence: 0.475)
+2026-05-19 12:22:37 | INFO     | [CYCLE_2] HOLD | Confidence: 0.476 < 0.709
+2026-05-19 12:22:37 | INFO     | Forbidden trade tracked: forbidden_1779193357.948102 (confidence: 0.476)
+2026-05-19 12:23:13 | INFO     | [CYCLE_3] HOLD | Confidence: 0.476 < 0.709
+2026-05-19 12:23:13 | INFO     | Forbidden trade tracked: forbidden_1779193393.07168 (confidence: 0.476)
+2026-05-19 12:23:13 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1779193322.80937 | PnL: -0.13%
+2026-05-19 12:23:48 | INFO     | [CYCLE_4] HOLD | Confidence: 0.478 < 0.710
+2026-05-19 12:23:48 | INFO     | Forbidden trade tracked: forbidden_1779193428.249564 (confidence: 0.478)
+2026-05-19 12:23:48 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1779193357.948102 | PnL: -0.09%
