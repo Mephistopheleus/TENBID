@@ -1,0 +1,308 @@
+"""
+Volume Profile Analyzer - Volume-based Support/Resistance Detection.
+
+Analyzes volume distribution across price levels to identify:
+- POC (Point of Control) - price with highest volume
+- Value Area (VA) - range containing 70% of volume
+- High/Low Volume Nodes - support/resistance zones
+"""
+
+import logging
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class VolumeProfileResult:
+    """Volume profile analysis result."""
+    poc: float  # Point of Control price
+    value_area_high: float
+    value_area_low: float
+    value_area_width: float
+    current_price_vs_poc: float  # % distance from POC
+    volume_distribution: str  # 'BALANCED', 'SKEWED_UP', 'SKEWED_DOWN'
+    support_levels: List[float]
+    resistance_levels: List[float]
+    confidence: float
+
+class VolumeProfileAnalyzer:
+    def __init__(self, lookback_bars: int = 100, value_area_percent: float = 0.70):
+        """
+        Initialize Volume Profile Analyzer.
+        
+        Args:
+            lookback_bars: Number of bars to analyze
+            value_area_percent: Percentage of volume in value area (default 70%)
+        """
+        self.lookback_bars = lookback_bars
+        self.value_area_percent = value_area_percent
+        
+        # Minimum bins for profile
+        self.NUM_PRICE_BINS = 50
+        
+        logger.info(f"VolumeProfileAnalyzer initialized (lookback={lookback_bars}, VA={value_area_percent*100}%)")
+    
+    def analyze(self, df: pd.DataFrame, current_price: float) -> VolumeProfileResult:
+        """
+        Analyze volume profile from OHLCV data.
+        
+        Args:
+            df: DataFrame with columns ['high', 'low', 'close', 'volume']
+            current_price: Current market price
+            
+        Returns:
+            VolumeProfileResult with POC, value area, and levels
+        """
+        if len(df) < 10:
+            return self._empty_result(current_price)
+        
+        # Get recent data
+        df_recent = df.tail(self.lookback_bars).copy()
+        
+        if len(df_recent) < 10:
+            return self._empty_result(current_price)
+        
+        # Calculate price range
+        price_min = df_recent['low'].min()
+        price_max = df_recent['high'].max()
+        
+        if price_max <= price_min:
+            return self._empty_result(current_price)
+        
+        # Create price bins for volume distribution
+        bin_edges = np.linspace(price_min, price_max, self.NUM_PRICE_BINS + 1)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        # Distribute volume across bins
+        volume_by_bin = self._distribute_volume(df_recent, bin_edges)
+        
+        if volume_by_bin.sum() == 0:
+            return self._empty_result(current_price)
+        
+        # Find POC (Point of Control)
+        poc_idx = np.argmax(volume_by_bin)
+        poc = bin_centers[poc_idx]
+        
+        # Calculate Value Area (70% of volume around POC)
+        va_high, va_low = self._calculate_value_area(
+            bin_centers, volume_by_bin, poc, self.value_area_percent
+        )
+        
+        # Find high/low volume nodes
+        support_levels, resistance_levels = self._find_volume_nodes(
+            bin_centers, volume_by_bin, current_price
+        )
+        
+        # Determine volume distribution shape
+        distribution = self._classify_distribution(volume_by_bin, poc_idx)
+        
+        # Calculate distance from POC
+        poc_distance_pct = (current_price - poc) / poc * 100
+        
+        # Calculate confidence based on profile clarity
+        confidence = self._calculate_confidence(volume_by_bin, poc_idx)
+        
+        return VolumeProfileResult(
+            poc=round(poc, 8),
+            value_area_high=round(va_high, 8),
+            value_area_low=round(va_low, 8),
+            value_area_width=round(va_high - va_low, 8),
+            current_price_vs_poc=round(poc_distance_pct, 4),
+            volume_distribution=distribution,
+            support_levels=[round(l, 8) for l in support_levels[:3]],
+            resistance_levels=[round(r, 8) for r in resistance_levels[:3]],
+            confidence=round(confidence, 4)
+        )
+    
+    def _distribute_volume(self, df: pd.DataFrame, bin_edges: np.ndarray) -> np.ndarray:
+        """
+        Distribute trading volume across price bins.
+        
+        Uses bar's average price weighted by volume.
+        """
+        volume_dist = np.zeros(len(bin_edges) - 1)
+        
+        for _, row in df.iterrows():
+            # Use typical price (HLC average)
+            typical_price = (row['high'] + row['low'] + row['close']) / 3
+            volume = row['volume']
+            
+            # Find which bin this price falls into
+            bin_idx = np.searchsorted(bin_edges, typical_price) - 1
+            bin_idx = max(0, min(len(volume_dist) - 1, bin_idx))
+            
+            volume_dist[bin_idx] += volume
+        
+        return volume_dist
+    
+    def _calculate_value_area(
+        self,
+        bin_centers: np.ndarray,
+        volume_by_bin: np.ndarray,
+        poc: float,
+        target_percent: float
+    ) -> Tuple[float, float]:
+        """
+        Calculate Value Area containing target_percent of total volume.
+        
+        Starts from POC and expands outward until target is reached.
+        """
+        total_volume = volume_by_bin.sum()
+        target_volume = total_volume * target_percent
+        
+        # Find POC index
+        poc_idx = np.argmin(np.abs(bin_centers - poc))
+        
+        # Expand from POC
+        left_idx = poc_idx
+        right_idx = poc_idx
+        accumulated_volume = volume_by_bin[poc_idx]
+        
+        while accumulated_volume < target_volume:
+            # Check which side to expand
+            left_vol = volume_by_bin[left_idx - 1] if left_idx > 0 else 0
+            right_vol = volume_by_bin[right_idx + 1] if right_idx < len(volume_by_bin) - 1 else 0
+            
+            if left_vol >= right_vol and left_idx > 0:
+                left_idx -= 1
+                accumulated_volume += volume_by_bin[left_idx]
+            elif right_idx < len(volume_by_bin) - 1:
+                right_idx += 1
+                accumulated_volume += volume_by_bin[right_idx]
+            else:
+                break
+        
+        va_low = bin_centers[left_idx]
+        va_high = bin_centers[right_idx]
+        
+        return va_high, va_low
+    
+    def _find_volume_nodes(
+        self,
+        bin_centers: np.ndarray,
+        volume_by_bin: np.ndarray,
+        current_price: float
+    ) -> Tuple[List[float], List[float]]:
+        """
+        Find high volume nodes (support/resistance) and low volume nodes.
+        
+        High volume = strong support/resistance
+        Low volume = price moves through quickly
+        """
+        avg_volume = np.mean(volume_by_bin)
+        high_vol_threshold = avg_volume * 1.5
+        low_vol_threshold = avg_volume * 0.5
+        
+        support_levels = []
+        resistance_levels = []
+        
+        for i, (price, vol) in enumerate(zip(bin_centers, volume_by_bin)):
+            if vol >= high_vol_threshold:
+                if price < current_price:
+                    support_levels.append(price)
+                elif price > current_price:
+                    resistance_levels.append(price)
+        
+        # Sort by proximity to current price
+        support_levels.sort(reverse=True)  # Closest first below
+        resistance_levels.sort()  # Closest first above
+        
+        return support_levels, resistance_levels
+    
+    def _classify_distribution(self, volume_by_bin: np.ndarray, poc_idx: int) -> str:
+        """
+        Classify volume distribution shape.
+        
+        BALANCED: Symmetric around POC
+        SKEWED_UP: More volume above POC (bullish)
+        SKEWED_DOWN: More volume below POC (bearish)
+        """
+        if poc_idx <= 5 or poc_idx >= len(volume_by_bin) - 5:
+            return 'EXTREME'  # POC at edge
+        
+        # Compare volume above and below POC
+        volume_below = volume_by_bin[:poc_idx].sum()
+        volume_above = volume_by_bin[poc_idx+1:].sum()
+        
+        if volume_below == 0 and volume_above == 0:
+            return 'BALANCED'
+        
+        ratio = volume_above / max(volume_below, 1)
+        
+        if ratio > 1.3:
+            return 'SKEWED_UP'
+        elif ratio < 0.7:
+            return 'SKEWED_DOWN'
+        else:
+            return 'BALANCED'
+    
+    def _calculate_confidence(self, volume_by_bin: np.ndarray, poc_idx: int) -> float:
+        """
+        Calculate confidence in the volume profile analysis.
+        
+        Higher confidence when:
+        - Clear POC (one dominant bin)
+        - Smooth distribution
+        - Sufficient volume
+        """
+        total_volume = volume_by_bin.sum()
+        poc_volume = volume_by_bin[poc_idx]
+        
+        # POC dominance (higher = clearer profile)
+        poc_dominance = poc_volume / max(total_volume / len(volume_by_bin), 1)
+        
+        # Normalize to 0-1
+        confidence = min(1.0, poc_dominance / 3.0)
+        
+        return confidence
+    
+    def _empty_result(self, current_price: float) -> VolumeProfileResult:
+        """Return empty result when insufficient data."""
+        return VolumeProfileResult(
+            poc=current_price,
+            value_area_high=current_price * 1.02,
+            value_area_low=current_price * 0.98,
+            value_area_width=current_price * 0.04,
+            current_price_vs_poc=0.0,
+            volume_distribution='UNKNOWN',
+            support_levels=[],
+            resistance_levels=[],
+            confidence=0.0
+        )
+    
+    def get_signal(self, profile: VolumeProfileResult, position: str = None) -> Tuple[float, float]:
+        """
+        Generate trading signal from volume profile.
+        
+        Returns:
+            score: -1.0 to +1.0 (bearish to bullish)
+            confidence: 0.0 to 1.0
+        """
+        if profile.confidence < 0.3:
+            return 0.0, 0.0
+        
+        score = 0.0
+        
+        # Price relative to POC
+        if profile.current_price_vs_poc > 2:  # Price well above POC
+            # Might be overextended
+            score -= 0.3
+        elif profile.current_price_vs_poc < -2:  # Price well below POC
+            # Potential bounce
+            score += 0.3
+        
+        # Distribution skew
+        if profile.volume_distribution == 'SKEWED_UP':
+            score += 0.2
+        elif profile.volume_distribution == 'SKEWED_DOWN':
+            score -= 0.2
+        
+        # Position relative to value area
+        # (would need current_price passed in)
+        
+        confidence = profile.confidence
+        
+        return score, confidence
