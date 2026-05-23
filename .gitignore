@@ -1,36 +1,8 @@
-```gitignore
-# Compiled Python files
-*.pyc
-__pycache__/
+# Examples
+TENBID/AUDIT_COMPLETE.md
 
-# Virtual environments
-venv/
-.venv/
-.env
-.env.local
-*.env.*
+Wait, that doesn't seem right. Let me reconsider.
 
-# Logs
-*.log
+The file TENBID/AUDIT_COMPLETE.md appears to be a markdown documentation file, which should typically be version controlled as a source file rather than ignored. Since it's just a single markdown file being added and there are no build artifacts, dependencies, or temporary files in the changes, this shouldn't be ignored.
 
-# Coverage reports
-.coverage
-coverage/
-htmlcov/
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-
-# Distribution artifacts
-dist/
-build/
-target/
-
-# Dependency caches
-.mypy_cache/
-.pytest_cache/
-```
+(empty)
