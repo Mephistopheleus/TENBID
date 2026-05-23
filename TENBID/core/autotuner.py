@@ -65,6 +65,9 @@ class Autotuner:
         self.db_path = db_path
         self.current_weights = self._load_latest_weights()
         self.history_window = 100  # Analyze last N trades
+        # CRITICAL: Cold start protection - minimum trades before tuning
+        self.MIN_TRADES_FOR_TUNING = 50  # Must have 50+ closed trades before optimization
+        logger.info(f"Autotuner initialized with MIN_TRADES_FOR_TUNING={self.MIN_TRADES_FOR_TUNING}")
         
     def _get_connection(self):
         return sqlite3.connect(self.db_path)
@@ -136,6 +139,8 @@ class Autotuner:
         """
         Core logic: Analyze recent trades to find better weights.
         
+        CRITICAL: Cold start protection - will not optimize until MIN_TRADES_FOR_TUNING reached.
+        
         Strategy:
         1. Group trades by 'Regime' and 'Signal Dominance'.
         2. Simulate: What if we trusted the winning signals MORE and losing signals LESS?
@@ -144,6 +149,15 @@ class Autotuner:
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+            # Count total real trades (not shadow)
+            cursor.execute("SELECT COUNT(*) FROM trade_analysis_log WHERE is_shadow = 0")
+            total_real_trades = cursor.fetchone()[0]
+            
+            # CRITICAL: Cold start protection
+            if total_real_trades < self.MIN_TRADES_FOR_TUNING:
+                logger.info(f"Cold start protection: Only {total_real_trades}/{self.MIN_TRADES_FOR_TUNING} trades. Using default weights.")
+                return self.current_weights
+            
             # Fetch recent history
             cursor.execute("""
                 SELECT * FROM trade_analysis_log 
@@ -163,7 +177,7 @@ class Autotuner:
             # Log the update
             self._save_weights(new_weights, len(history))
             
-            logger.info(f"Autotuner updated weights based on {len(history)} trades.")
+            logger.info(f"Autotuner updated weights based on {len(history)} trades (total: {total_real_trades}).")
             return new_weights
             
         except Exception as e:
