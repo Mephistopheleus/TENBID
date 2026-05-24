@@ -2,40 +2,84 @@
 Pattern Recognition Analyzer
 Анализирует свечные паттерны (микро) и графические фигуры (макро).
 Возвращает сигнал и уровень уверенности на основе найденных фигур.
+Поддерживает мульти-ТФ анализ.
 """
 import numpy as np
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
 from core.data_lineage import DataLineage, DataSource, DataQuality
+from .multi_tf_context import MultiTFContextAggregator, TimeframeResult
 
 class PatternRecognitionAnalyzer:
-    def __init__(self):
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {}
         self.lineage = DataLineage(
             source=DataSource.CALCULATED,
             quality=DataQuality.MEDIUM,
             timestamp=datetime.now(),
             calculation_method="pattern_recognition",
-            metadata={"version": "1.0", "type": "candlestick_and_chart_patterns"}
+            metadata={"version": "2.0", "type": "candlestick_and_chart_patterns", "multi_tf": True}
         )
+        self.aggregator = MultiTFContextAggregator()
         
     def analyze(self, context) -> Dict[str, Any]:
         """
-        Полный анализ паттернов.
+        Полный анализ паттернов с поддержкой мульти-ТФ.
+        Анализирует паттерны на всех доступных таймфреймах и агрегирует результаты.
         """
-        # Получаем данные из контекста - используем первый символ в market_data
-        if not context.market_data:
+        # Собираем данные со всех доступных ТФ
+        tf_data = self._collect_all_timeframe_data(context)
+        
+        if not tf_data:
             return self._empty_result("No market data in context")
         
-        # Берем данные для первого доступного символа (обычно тот же symbol что и в контексте)
-        symbol = next(iter(context.market_data.keys()), None)
-        if not symbol:
-            return self._empty_result("No symbol found in market_data")
+        # Анализируем каждый ТФ отдельно
+        per_timeframe_results = {}
+        for timeframe, df in tf_data.items():
+            if df is None or len(df) < 10:
+                continue
             
-        df = context.market_data[symbol]
+            result = self._analyze_single_timeframe(df, timeframe)
+            per_timeframe_results[timeframe] = result
         
-        if df is None or len(df) < 10:
-            return self._empty_result(f"No data or insufficient data (len={len(df) if df is not None else 0})")
-
+        if not per_timeframe_results:
+            return self._empty_result("No valid data on any timeframe")
+        
+        # Агрегируем результаты через MultiTFContextAggregator
+        aggregated = self.aggregator.aggregate_pattern_signals(per_timeframe_results)
+        
+        result = {
+            "signal": aggregated["signal"],
+            "confidence": aggregated["confidence"],
+            "details": aggregated["details"],
+            "per_timeframe_results": per_timeframe_results,
+            "multi_tf_context": aggregated.get("multi_tf_context"),
+            "lineage": self.lineage
+        }
+        return result
+    
+    def _collect_all_timeframe_data(self, context) -> Dict[str, Any]:
+        """Собирает данные со всех доступных ТФ (базовых + синтетических)."""
+        tf_data = {}
+        
+        # Базовые данные
+        if context.market_data:
+            for symbol, df in context.market_data.items():
+                tf_data[context.timeframe] = df
+                break  # Берем первый символ
+        
+        # Синтетические ТФ
+        if context.synthetic_data:
+            for tf, data_tuple in context.synthetic_data.items():
+                if isinstance(data_tuple, tuple) and len(data_tuple) > 0:
+                    tf_data[tf] = data_tuple[0]  # DataFrame
+                else:
+                    tf_data[tf] = data_tuple
+        
+        return tf_data
+    
+    def _analyze_single_timeframe(self, df, timeframe: str) -> Dict[str, Any]:
+        """Анализ паттернов на одном ТФ."""
         # 1. Анализ свечных паттернов (Микро)
         candle_patterns = self._analyze_candlestick_patterns(df)
         
@@ -45,13 +89,14 @@ class PatternRecognitionAnalyzer:
         # Агрегация результатов
         signal, confidence, details = self._aggregate_signals(candle_patterns, chart_patterns)
         
-        result = {
-            "signal": signal, # 1 (buy), -1 (sell), 0 (neutral)
-            "confidence": confidence, # 0.0 - 1.0
-            "details": details,
-            "lineage": self.lineage
+        return {
+            "timeframe": timeframe,
+            "signal": signal,
+            "confidence": confidence,
+            "candle_patterns": candle_patterns,
+            "chart_patterns": chart_patterns,
+            "details": details
         }
-        return result
 
     def _analyze_candlestick_patterns(self, df) -> List[Dict]:
         """Поиск известных свечных паттернов на последних свечах."""

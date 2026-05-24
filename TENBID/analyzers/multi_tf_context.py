@@ -72,7 +72,7 @@ class MultiTFContextAggregator:
         context = aggregator.aggregate(tf_analysis_dict)
     """
     
-    def __init__(self, config):
+    def __init__(self, config=None):
         """
         Initialize aggregator.
         
@@ -82,8 +82,11 @@ class MultiTFContextAggregator:
         self.config = config
         
         # Timeframe hierarchy (highest to lowest importance)
-        self.tf_hierarchy = config.get_list('MULTITF', 'timeframe_hierarchy', 
-                                            fallback=['1h', '15m', '5m'])
+        if config and hasattr(config, 'get_list'):
+            self.tf_hierarchy = config.get_list('MULTITF', 'timeframe_hierarchy', 
+                                                fallback=['1h', '15m', '5m'])
+        else:
+            self.tf_hierarchy = ['1h', '30m', '15m', '5m']
         
         # Weights for each TF (higher TF = more weight for trend direction)
         self.tf_weights = {
@@ -93,10 +96,11 @@ class MultiTFContextAggregator:
             '5m': 0.05
         }
         # Override with config if provided
-        for tf in self.tf_hierarchy:
-            weight_key = f'tf_weight_{tf}'
-            if config.has_option('MULTITF', weight_key):
-                self.tf_weights[tf] = config.getfloat('MULTITF', weight_key)
+        if config and hasattr(config, 'has_option'):
+            for tf in self.tf_hierarchy:
+                weight_key = f'tf_weight_{tf}'
+                if config.has_option('MULTITF', weight_key):
+                    self.tf_weights[tf] = config.getfloat('MULTITF', weight_key)
         
         # Normalize weights
         total_weight = sum(self.tf_weights.get(tf, 0.1) for tf in self.tf_hierarchy)
@@ -365,3 +369,159 @@ def create_multi_tf_context(config, tf_analysis: Dict[str, dict], symbol: str) -
     """
     aggregator = MultiTFContextAggregator(config)
     return aggregator.aggregate(tf_analysis, symbol)
+
+
+@dataclass
+class TimeframeResult:
+    """Result for a single timeframe."""
+    timeframe: str
+    signal: int  # 1=bullish, -1=bearish, 0=neutral
+    confidence: float
+    details: Dict
+
+
+# Add method for pattern signals aggregation
+MultiTFContextAggregator.pattern_tf_weights = {
+    '1h': 0.4,
+    '30m': 0.25,
+    '15m': 0.2,
+    '5m': 0.15
+}
+
+def _aggregate_pattern_signals(self, per_timeframe_results: Dict[str, Dict]) -> Dict:
+    """
+    Aggregate pattern recognition signals across timeframes.
+    
+    Args:
+        per_timeframe_results: Dict {timeframe: result_dict}
+        
+    Returns:
+        Dict with aggregated signal, confidence, and details
+    """
+    if not per_timeframe_results:
+        return {"signal": 0, "confidence": 0.0, "details": {}}
+    
+    total_score = 0.0
+    total_weight = 0.0
+    all_patterns = []
+    
+    for tf, result in per_timeframe_results.items():
+        weight = self.pattern_tf_weights.get(tf, 0.1)
+        signal = result.get('signal', 0)
+        confidence = result.get('confidence', 0.0)
+        
+        if signal != 0 and confidence > 0:
+            total_score += signal * confidence * weight
+            total_weight += weight
+            
+            # Collect patterns
+            candle_patterns = result.get('candle_patterns', [])
+            chart_patterns = result.get('chart_patterns', [])
+            for p in candle_patterns + chart_patterns:
+                p_copy = p.copy()
+                p_copy['timeframe'] = tf
+                all_patterns.append(p_copy)
+    
+    if total_weight == 0:
+        return {"signal": 0, "confidence": 0.0, "details": {"patterns": all_patterns}}
+    
+    normalized_score = total_score / total_weight
+    signal = 1 if normalized_score > 0 else (-1 if normalized_score < 0 else 0)
+    confidence = min(1.0, abs(normalized_score))
+    
+    # Build multi-TF context
+    multi_tf_context = {
+        "timeframes_analyzed": list(per_timeframe_results.keys()),
+        "pattern_count": len(all_patterns),
+        "dominant_patterns": [p for p in all_patterns if p.get('strength', 0) > 0.7][:3]
+    }
+    
+    return {
+        "signal": signal,
+        "confidence": confidence,
+        "details": {
+            "patterns": all_patterns,
+            "per_tf_signals": {tf: r.get('signal', 0) for tf, r in per_timeframe_results.items()}
+        },
+        "multi_tf_context": multi_tf_context
+    }
+
+# Bind method to class
+MultiTFContextAggregator.aggregate_pattern_signals = _aggregate_pattern_signals
+
+
+# Add method for regime signals aggregation
+MultiTFContextAggregator.regime_tf_weights = {
+    '1h': 0.5,
+    '30m': 0.25,
+    '15m': 0.15,
+    '5m': 0.1
+}
+
+def _aggregate_regime_signals(self, per_timeframe_results: Dict[str, Dict]) -> Dict:
+    """
+    Aggregate market regime signals across timeframes.
+    
+    Args:
+        per_timeframe_results: Dict {timeframe: result_dict}
+        
+    Returns:
+        Dict with aggregated regime, confidence, and metrics
+    """
+    if not per_timeframe_results:
+        return {"regime": "UNKNOWN", "confidence": 0.0, "metrics": {}}
+    
+    # Count regimes
+    regime_counts = {"TREND_UP": 0, "TREND_DOWN": 0, "RANGING": 0, "HIGH_VOLATILITY": 0}
+    weighted_score = 0.0
+    total_weight = 0.0
+    all_metrics = {}
+    
+    for tf, result in per_timeframe_results.items():
+        weight = self.regime_tf_weights.get(tf, 0.1)
+        regime = result.get('regime', 'UNKNOWN')
+        confidence = result.get('confidence', 0.0)
+        
+        if regime in regime_counts:
+            regime_counts[regime] += weight
+        
+        # Convert regime to numeric score for averaging
+        if regime == "TREND_UP":
+            weighted_score += 1.0 * confidence * weight
+        elif regime == "TREND_DOWN":
+            weighted_score += -1.0 * confidence * weight
+        elif regime == "RANGING":
+            weighted_score += 0.0 * confidence * weight
+        elif regime == "HIGH_VOLATILITY":
+            # High volatility is neutral but important
+            pass
+        
+        total_weight += weight
+        all_metrics[tf] = result.get('metrics', {})
+    
+    if total_weight == 0:
+        return {"regime": "UNKNOWN", "confidence": 0.0, "metrics": all_metrics}
+    
+    # Determine dominant regime
+    dominant_regime = max(regime_counts, key=regime_counts.get)
+    
+    # Calculate confidence based on agreement
+    max_count = max(regime_counts.values())
+    confidence = max_count / total_weight if total_weight > 0 else 0.0
+    
+    # Build multi-TF context
+    multi_tf_context = {
+        "timeframes_analyzed": list(per_timeframe_results.keys()),
+        "regime_distribution": regime_counts,
+        "dominant_regime": dominant_regime
+    }
+    
+    return {
+        "regime": dominant_regime,
+        "confidence": min(1.0, confidence),
+        "metrics": all_metrics,
+        "multi_tf_context": multi_tf_context
+    }
+
+# Bind method to class
+MultiTFContextAggregator.aggregate_regime_signals = _aggregate_regime_signals

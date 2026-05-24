@@ -1,5 +1,6 @@
 """
 Derivatives Analyzer - Funding Rate and Open Interest Analysis.
+Multi-Timeframe Support Enabled.
 
 Analyzes futures market data:
 - Funding Rate (cost of holding positions)
@@ -8,6 +9,7 @@ Analyzes futures market data:
 - Liquidation heatmaps
 
 These metrics provide insight into market sentiment and potential squeeze scenarios.
+Supports multi-timeframe analysis by analyzing trends across different time periods.
 """
 
 import logging
@@ -16,6 +18,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
+from core.data_lineage import AnalysisContext, LineageTracker, DataSource, DataQuality
+from analyzers.multi_tf_context import MultiTFContextAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +34,20 @@ class DerivativesMetrics:
     liquidation_risk: str  # 'LOW', 'MEDIUM', 'HIGH'
     sentiment_score: float  # -1.0 to +1.0 derived from derivatives data
     confidence: float
+    timeframe: Optional[str] = None
+
 
 class DerivativesAnalyzer:
-    def __init__(self, binance_client):
+    def __init__(self, binance_client, config=None):
         """
-        Initialize Derivatives Analyzer.
+        Initialize Derivatives Analyzer with multi-TF support.
         
         Args:
             binance_client: Binance futures client
+            config: Application configuration
         """
         self.client = binance_client
+        self.config = config
         
         # Funding rate thresholds
         self.HIGH_FUNDING_RATE = 0.01  # 1% per 8 hours = extreme
@@ -48,27 +56,156 @@ class DerivativesAnalyzer:
         # OI change thresholds
         self.OI_SIGNIFICANT_CHANGE = 0.15  # 15% change is significant
         
-        logger.info("DerivativesAnalyzer initialized")
-    
-    def analyze(self, symbol: str) -> DerivativesMetrics:
-        """
-        Analyze derivatives metrics for a symbol.
+        # Timeframes for analysis (different lookback periods)
+        self.timeframes = ['1h', '15m', '5m']
+        if config and hasattr(config, 'get_list'):
+            self.timeframes = config.get_list('MULTITF', 'timeframe_hierarchy',
+                                              fallback=['1h', '15m', '5m'])
         
-        Returns comprehensive view of futures market conditions.
+        # Aggregator for multi-TF results
+        self.aggregator = MultiTFContextAggregator(config) if config else MultiTFContextAggregator()
+        
+        logger.info(f"DerivativesAnalyzer initialized with multi-TF support: {self.timeframes}")
+    
+    def analyze(self, symbol: str, context: Optional[AnalysisContext] = None) -> Dict:
+        """
+        Analyze derivatives metrics with multi-timeframe support.
+        
+        Returns comprehensive view of futures market conditions across multiple timeframes.
         """
         try:
-            # Get funding rate history
-            funding_rates = self._get_funding_rates(symbol)
+            # For derivatives, we analyze different time windows instead of candle TFs
+            # Collect data for different lookback periods
+            tf_data = self._collect_timeframe_data(symbol)
             
-            # Get open interest data
-            oi_data = self._get_open_interest(symbol)
+            if not tf_data:
+                return {
+                    "error": "No derivatives data available",
+                    "confidence": 0.0
+                }
             
-            # Get long/short ratio
-            ls_ratio = self._get_long_short_ratio(symbol)
+            # Analyze each timeframe separately
+            per_timeframe_results = {}
             
-            # Calculate metrics
-            current_funding = funding_rates['current'] if funding_rates else 0.0
-            funding_trend = self._analyze_funding_trend(funding_rates)
+            for tf, data in tf_data.items():
+                result = self._analyze_single_timeframe(symbol, tf, data)
+                if result and 'error' not in result:
+                    per_timeframe_results[tf] = result
+            
+            if not per_timeframe_results:
+                return {
+                    "error": "Analysis failed on all timeframes",
+                    "confidence": 0.0
+                }
+            
+            # Aggregate results using MultiTFContextAggregator
+            tf_analysis_for_aggregator = {}
+            for tf, result in per_timeframe_results.items():
+                # Determine trend from sentiment score
+                sentiment = result.get('sentiment_score', 0)
+                trend = 1 if sentiment > 0.2 else (-1 if sentiment < -0.2 else 0)
+                
+                tf_analysis_for_aggregator[tf] = {
+                    'trend': trend,
+                    'trend_strength': abs(sentiment),
+                    'support': 0,  # Derivatives don't provide S/R levels
+                    'resistance': 0,
+                    'volume_score': result.get('confidence', 0),
+                    'atr': 0,
+                    'confidence': result.get('confidence', 0)
+                }
+            
+            # Create aggregated context
+            if context:
+                multi_tf_context = self.aggregator.aggregate(tf_analysis_for_aggregator, symbol)
+                
+                final_result = {
+                    "timeframes_analyzed": list(per_timeframe_results.keys()),
+                    "per_timeframe_results": per_timeframe_results,
+                    "multi_tf_context": {
+                        "dominant_trend": multi_tf_context.dominant_trend,
+                        "trend_alignment": multi_tf_context.trend_alignment,
+                        "composite_confidence": multi_tf_context.composite_confidence,
+                        "trend_conflicts": multi_tf_context.trend_conflicts
+                    },
+                    "aggregate_sentiment": np.mean([r['sentiment_score'] for r in per_timeframe_results.values()]),
+                    "aggregate_liquidation_risk": self._get_dominant_risk(per_timeframe_results),
+                    "confidence": multi_tf_context.composite_confidence,
+                    "lineage": multi_tf_context.lineage
+                }
+                
+                context.add_result("Derivatives", final_result, multi_tf_context.lineage)
+            else:
+                # Fallback without context
+                final_result = {
+                    "timeframes_analyzed": list(per_timeframe_results.keys()),
+                    "per_timeframe_results": per_timeframe_results,
+                    "aggregate_sentiment": np.mean([r['sentiment_score'] for r in per_timeframe_results.values()]),
+                    "aggregate_liquidation_risk": self._get_dominant_risk(per_timeframe_results),
+                    "confidence": np.mean([r['confidence'] for r in per_timeframe_results.values()])
+                }
+            
+            return final_result
+            
+        except Exception as e:
+            logger.error(f"Error analyzing derivatives for {symbol}: {e}")
+            return {
+                "error": str(e),
+                "confidence": 0.0
+            }
+    
+    def _collect_timeframe_data(self, symbol: str) -> Dict[str, Dict]:
+        """
+        Collect derivatives data for different time windows.
+        Returns: dict {timeframe: data_dict}
+        """
+        tf_data = {}
+        
+        # Get funding rate history
+        funding_rates = self._get_funding_rates(symbol)
+        
+        # Get open interest data
+        oi_data = self._get_open_interest(symbol)
+        
+        # Get long/short ratio
+        ls_ratio = self._get_long_short_ratio(symbol)
+        
+        # Create different time windows for analysis
+        if funding_rates and len(funding_rates.get('rates', [])) >= 9:
+            # 1h window: last 3 funding rates (24 hours)
+            tf_data['1h'] = {
+                'funding_rates': funding_rates['rates'][-3:],
+                'oi_data': oi_data,
+                'ls_ratio': ls_ratio
+            }
+        
+        if funding_rates and len(funding_rates.get('rates', [])) >= 6:
+            # 15m window: last 6 funding rates (more recent)
+            tf_data['15m'] = {
+                'funding_rates': funding_rates['rates'][-6:],
+                'oi_data': oi_data,
+                'ls_ratio': ls_ratio
+            }
+        
+        # 5m window: most recent data point
+        if funding_rates:
+            tf_data['5m'] = {
+                'funding_rates': funding_rates['rates'][-1:],
+                'oi_data': oi_data,
+                'ls_ratio': ls_ratio
+            }
+        
+        return tf_data
+    
+    def _analyze_single_timeframe(self, symbol: str, timeframe: str, data: Dict) -> Dict:
+        """Analyze derivatives metrics for a single timeframe window."""
+        try:
+            funding_rates = data.get('funding_rates', [])
+            oi_data = data.get('oi_data')
+            ls_ratio = data.get('ls_ratio')
+            
+            current_funding = funding_rates[-1] if funding_rates else 0.0
+            funding_trend = self._analyze_funding_trend({'rates': funding_rates})
             
             current_oi = oi_data['current'] if oi_data else 0.0
             oi_change = oi_data['change_24h'] if oi_data else 0.0
@@ -80,7 +217,7 @@ class DerivativesAnalyzer:
                 long_short=ls_ratio
             )
             
-            # Calculate sentiment score from derivatives data
+            # Calculate sentiment score
             sentiment = self._calculate_sentiment(
                 funding_rate=current_funding,
                 funding_trend=funding_trend,
@@ -90,25 +227,48 @@ class DerivativesAnalyzer:
             
             # Confidence based on data availability
             confidence = self._calculate_confidence(
-                has_funding=funding_rates is not None,
+                has_funding=bool(funding_rates),
                 has_oi=oi_data is not None,
                 has_ls=ls_ratio is not None
             )
             
-            return DerivativesMetrics(
-                funding_rate=round(current_funding, 6),
-                funding_rate_trend=funding_trend,
-                open_interest=round(current_oi, 2),
-                oi_change_24h=round(oi_change, 4),
-                long_short_ratio=round(ls_ratio, 4) if ls_ratio else 1.0,
-                liquidation_risk=liquidation_risk,
-                sentiment_score=round(sentiment, 4),
-                confidence=round(confidence, 4)
+            lineage = LineageTracker.create_calculated(
+                method=f"derivatives_analysis_{timeframe}",
+                dependencies=[],
+                quality=DataQuality.MEDIUM if confidence > 0.5 else DataQuality.LOW,
+                metadata={
+                    'timeframe': timeframe,
+                    'funding_rate': current_funding,
+                    'sentiment': sentiment
+                }
             )
             
+            return {
+                "funding_rate": round(current_funding, 6),
+                "funding_rate_trend": funding_trend,
+                "open_interest": round(current_oi, 2),
+                "oi_change_24h": round(oi_change, 4),
+                "long_short_ratio": round(ls_ratio, 4) if ls_ratio else 1.0,
+                "liquidation_risk": liquidation_risk,
+                "sentiment_score": round(sentiment, 4),
+                "confidence": round(confidence, 4),
+                "timeframe": timeframe,
+                "lineage": lineage
+            }
+            
         except Exception as e:
-            logger.error(f"Error analyzing derivatives for {symbol}: {e}")
-            return self._empty_metrics()
+            logger.warning(f"Error analyzing {timeframe} for {symbol}: {e}")
+            return {"error": str(e), "confidence": 0.0, "timeframe": timeframe}
+    
+    def _get_dominant_risk(self, per_timeframe_results: Dict) -> str:
+        """Get the highest risk level across all timeframes."""
+        risk_order = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1, 'UNKNOWN': 0}
+        risks = [r.get('liquidation_risk', 'UNKNOWN') for r in per_timeframe_results.values()]
+        
+        if not risks:
+            return 'UNKNOWN'
+        
+        return max(risks, key=lambda x: risk_order.get(x, 0))
     
     def _get_funding_rates(self, symbol: str) -> Optional[Dict]:
         """Get funding rate history."""
