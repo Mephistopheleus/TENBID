@@ -1,1 +1,1 @@
-Nothing should be ignored in this case, as the only change is adding a markdown file (DEVELOPMENT_PLAN_v3.md) which is a source/config file and not a build artifact, dependency, or temporary file.
+Nothing should be ignored based on the provided file changes. The only added file is `CONTEXT_AND_RULES.md`, which is a markdown documentation file and should not be ignored.
