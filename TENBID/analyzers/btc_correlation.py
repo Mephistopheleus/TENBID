@@ -183,19 +183,32 @@ class BTCCorrelationAnalyzer:
             return None
 
     def _synchronize_data(self, df_main: pd.DataFrame, df_btc: pd.DataFrame, tf: str) -> pd.DataFrame:
-        """Приводит два датафрейма к общему виду."""
-        # Ресемплинг к единому таймфрейму (упрощенно берем последний price)
+        """
+        CRITICAL: Синхронизация временных меток для корректного расчета корреляции.
+        Использует .intersection() индексов для сравнения только идентичных timestamp.
+        """
+        # Ресемплинг к единому таймфрейму
         df_m = df_main[['close']].copy()
         df_b = df_btc.rename(columns={'close': 'close_btc'})
         
-        # Объединение по индексу времени
-        df_merged = pd.merge_asof(
-            df_m.reset_index(), 
-            df_b.reset_index(), 
-            on='time', 
-            direction='nearest',
-            tolerance=pd.Timedelta('1h')
-        ).set_index('time')
+        # CRITICAL: Используем intersection для гарантии идентичных timestamp
+        # Это предотвращает ложную корреляцию из-за рассинхронизации времени
+        common_index = df_m.index.intersection(df_b.index)
+        
+        if len(common_index) < 20:
+            # Если мало общих точек, используем forward fill с осторожностью
+            df_merged = pd.merge_asof(
+                df_m.reset_index(), 
+                df_b.reset_index(), 
+                on='time', 
+                direction='backward'
+            ).set_index('time')
+        else:
+            # Предпочтительный путь: только точные совпадения timestamp
+            df_merged = pd.concat([
+                df_m.loc[common_index],
+                df_b.loc[common_index]
+            ], axis=1)
         
         return df_merged.dropna()
 
