@@ -1,10 +1,13 @@
 """
 Volume Profile Analyzer - Volume-based Support/Resistance Detection.
+Multi-Timeframe Support Enabled.
 
 Analyzes volume distribution across price levels to identify:
 - POC (Point of Control) - price with highest volume
 - Value Area (VA) - range containing 70% of volume
 - High/Low Volume Nodes - support/resistance zones
+
+Supports analysis across multiple timeframes simultaneously.
 """
 
 import logging
@@ -12,6 +15,8 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
+from core.data_lineage import AnalysisContext, LineageTracker, DataSource, DataQuality
+from analyzers.multi_tf_context import MultiTFContextAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -27,27 +32,213 @@ class VolumeProfileResult:
     support_levels: List[float]
     resistance_levels: List[float]
     confidence: float
+    timeframe: Optional[str] = None
+
 
 class VolumeProfileAnalyzer:
-    def __init__(self, lookback_bars: int = 100, value_area_percent: float = 0.70):
+    def __init__(self, config=None, lookback_bars: int = 100, value_area_percent: float = 0.70):
         """
-        Initialize Volume Profile Analyzer.
+        Initialize Volume Profile Analyzer with multi-TF support.
         
         Args:
+            config: Application configuration
             lookback_bars: Number of bars to analyze
             value_area_percent: Percentage of volume in value area (default 70%)
         """
+        self.config = config
         self.lookback_bars = lookback_bars
         self.value_area_percent = value_area_percent
         
         # Minimum bins for profile
         self.NUM_PRICE_BINS = 50
         
-        logger.info(f"VolumeProfileAnalyzer initialized (lookback={lookback_bars}, VA={value_area_percent*100}%)")
+        # Timeframes for analysis
+        self.timeframes = ['1h', '15m', '5m']
+        if config and hasattr(config, 'get_list'):
+            self.timeframes = config.get_list('MULTITF', 'timeframe_hierarchy', 
+                                              fallback=['1h', '15m', '5m'])
+        
+        # Aggregator for multi-TF results
+        self.aggregator = MultiTFContextAggregator(config) if config else MultiTFContextAggregator()
+        
+        logger.info(f"VolumeProfileAnalyzer initialized (lookback={lookback_bars}, VA={value_area_percent*100}%, multi_tf=True)")
     
-    def analyze(self, df: pd.DataFrame, current_price: float) -> VolumeProfileResult:
+    def analyze(self, context: AnalysisContext, symbol: str = None) -> Dict:
         """
-        Analyze volume profile from OHLCV data.
+        Analyze volume profile across all available timeframes.
+        
+        Args:
+            context: AnalysisContext with market data
+            symbol: Trading symbol
+            
+        Returns:
+            Dict with aggregated results and multi-TF context
+        """
+        try:
+            # Collect data from all available timeframes
+            tf_data = self._collect_all_timeframe_data(context, symbol)
+            
+            if not tf_data:
+                lineage = LineageTracker.create_calculated(
+                    method="volume_profile_no_data",
+                    dependencies=[context.data_lineage] if context.data_lineage else [],
+                    quality=DataQuality.VERY_LOW,
+                    metadata={'error': 'No data available on any timeframe'}
+                )
+                return {
+                    "error": "No data available",
+                    "confidence": 0.0,
+                    "lineage": lineage
+                }
+            
+            # Analyze each timeframe separately
+            per_timeframe_results = {}
+            lineages = []
+            
+            for tf, (df, current_price, lineage) in tf_data.items():
+                result = self._analyze_single_timeframe(df, current_price, tf, lineage)
+                if result and 'error' not in result:
+                    per_timeframe_results[tf] = result
+                    if result.get('lineage'):
+                        lineages.append(result['lineage'])
+            
+            if not per_timeframe_results:
+                lineage = LineageTracker.create_calculated(
+                    method="volume_profile_analysis_failed",
+                    dependencies=[context.data_lineage] if context.data_lineage else [],
+                    quality=DataQuality.LOW,
+                    metadata={'error': 'Analysis failed on all timeframes'}
+                )
+                return {
+                    "error": "Analysis failed",
+                    "confidence": 0.0,
+                    "lineage": lineage
+                }
+            
+            # Aggregate results using MultiTFContextAggregator
+            # Convert to format expected by aggregator
+            tf_analysis_for_aggregator = {}
+            for tf, result in per_timeframe_results.items():
+                # Determine trend from volume distribution
+                trend = 1 if result.get('volume_distribution') == 'SKEWED_UP' else \
+                       (-1 if result.get('volume_distribution') == 'SKEWED_DOWN' else 0)
+                
+                tf_analysis_for_aggregator[tf] = {
+                    'trend': trend,
+                    'trend_strength': abs(result.get('current_price_vs_poc', 0)) / 100,
+                    'support': result.get('support_levels', [0])[0] if result.get('support_levels') else 0,
+                    'resistance': result.get('resistance_levels', [0])[0] if result.get('resistance_levels') else 0,
+                    'volume_score': result.get('confidence', 0),
+                    'atr': 0,
+                    'confidence': result.get('confidence', 0)
+                }
+            
+            multi_tf_context = self.aggregator.aggregate(tf_analysis_for_aggregator, symbol or "UNKNOWN")
+            
+            # Build final result
+            final_result = {
+                "timeframes_analyzed": list(per_timeframe_results.keys()),
+                "per_timeframe_results": per_timeframe_results,
+                "multi_tf_context": {
+                    "dominant_trend": multi_tf_context.dominant_trend,
+                    "trend_alignment": multi_tf_context.trend_alignment,
+                    "composite_confidence": multi_tf_context.composite_confidence,
+                    "trend_conflicts": multi_tf_context.trend_conflicts
+                },
+                "aggregate_poc": np.mean([r['poc'] for r in per_timeframe_results.values()]),
+                "aggregate_value_area": {
+                    "high": np.mean([r['value_area_high'] for r in per_timeframe_results.values()]),
+                    "low": np.mean([r['value_area_low'] for r in per_timeframe_results.values()])
+                },
+                "dominant_distribution": self._get_dominant_distribution(per_timeframe_results),
+                "confidence": multi_tf_context.composite_confidence,
+                "lineage": multi_tf_context.lineage
+            }
+            
+            context.add_result("VolumeProfile", final_result, multi_tf_context.lineage)
+            return final_result
+            
+        except Exception as e:
+            lineage = LineageTracker.create_calculated(
+                method="volume_profile_error",
+                dependencies=[context.data_lineage] if context.data_lineage else [],
+                quality=DataQuality.VERY_LOW,
+                metadata={'error': str(e)}
+            )
+            return {
+                "error": str(e),
+                "confidence": 0.0,
+                "lineage": lineage
+            }
+    
+    def _collect_all_timeframe_data(self, context: AnalysisContext, symbol: str) -> Dict[str, Tuple]:
+        """
+        Collect data from all available timeframes (base + synthetic).
+        Returns: dict {timeframe: (df, current_price, lineage)}
+        """
+        tf_data = {}
+        
+        # Check base market data
+        base_df = context.get_data(DataSource.MARKET_DATA, symbol=symbol)
+        if base_df is not None and not base_df.empty:
+            current_price = base_df['close'].iloc[-1]
+            tf_data[context.timeframe] = (base_df, current_price, context.data_lineage)
+        
+        # Check synthetic timeframes
+        for tf in self.timeframes:
+            synthetic_df = context.get_data(DataSource.SYNTHETIC_TF, timeframe=tf)
+            if synthetic_df is not None and not synthetic_df.empty:
+                synthetic_lineage = LineageTracker.create_calculated(
+                    method=f"synthetic_{tf}",
+                    dependencies=[context.data_lineage] if context.data_lineage else [],
+                    quality=DataQuality.MEDIUM,
+                    metadata={'timeframe': tf, 'source': 'synthetic'}
+                )
+                current_price = synthetic_df['close'].iloc[-1]
+                tf_data[tf] = (synthetic_df, current_price, synthetic_lineage)
+        
+        return tf_data
+    
+    def _analyze_single_timeframe(self, df: pd.DataFrame, current_price: float, 
+                                   timeframe: str, lineage) -> Dict:
+        """Analyze volume profile on a single timeframe."""
+        if len(df) < 10:
+            return {"error": "Insufficient data", "confidence": 0.0, "timeframe": timeframe}
+        
+        result = self.analyze_legacy(df, current_price)
+        result.timeframe = timeframe
+        result.lineage = lineage
+        
+        return {
+            "poc": result.poc,
+            "value_area_high": result.value_area_high,
+            "value_area_low": result.value_area_low,
+            "value_area_width": result.value_area_width,
+            "current_price_vs_poc": result.current_price_vs_poc,
+            "volume_distribution": result.volume_distribution,
+            "support_levels": result.support_levels,
+            "resistance_levels": result.resistance_levels,
+            "confidence": result.confidence,
+            "timeframe": timeframe,
+            "lineage": lineage
+        }
+    
+    def _get_dominant_distribution(self, per_timeframe_results: Dict) -> str:
+        """Get the most common volume distribution across timeframes."""
+        distributions = [r['volume_distribution'] for r in per_timeframe_results.values()]
+        if not distributions:
+            return 'UNKNOWN'
+        
+        # Count occurrences
+        counts = {}
+        for d in distributions:
+            counts[d] = counts.get(d, 0) + 1
+        
+        return max(counts, key=counts.get)
+    
+    def analyze_legacy(self, df: pd.DataFrame, current_price: float) -> VolumeProfileResult:
+        """
+        Analyze volume profile from OHLCV data. (Legacy method for single-TF analysis)
         
         Args:
             df: DataFrame with columns ['high', 'low', 'close', 'volume']
