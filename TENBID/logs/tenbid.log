@@ -3033,3 +3033,38 @@ AttributeError: 'tuple' object has no attribute 'iloc'
 2026-05-20 08:05:38 | INFO     | [CYCLE_194] HOLD | Confidence: 0.484 < 0.710
 2026-05-20 08:05:38 | INFO     | Forbidden trade tracked: forbidden_1779264338.880639 (confidence: 0.484)
 2026-05-20 08:05:38 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1779264268.536194 | PnL: -0.17%
+2026-05-23 08:08:45 | INFO     | ============================================================
+2026-05-23 08:08:45 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-23 08:08:45 | INFO     | Mode: TESTNET
+2026-05-23 08:08:45 | INFO     | Symbol: DOGEUSDT
+2026-05-23 08:08:45 | INFO     | Initial Balance: 200.0 USDT
+2026-05-23 08:08:45 | INFO     | ============================================================
+2026-05-23 08:08:45 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-23 08:08:45 | INFO     | Connected to Binance API
+2026-05-23 08:08:45 | INFO     | Warming up with 300 candles...
+2026-05-23 08:08:47 | INFO     | ============================================================
+2026-05-23 08:08:47 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-23 08:08:47 | INFO     | Mode: TESTNET
+2026-05-23 08:08:47 | INFO     | Symbol: DOGEUSDT
+2026-05-23 08:08:47 | INFO     | Initial Balance: 200.0 USDT
+2026-05-23 08:08:47 | INFO     | ============================================================
+2026-05-23 08:08:47 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-23 08:08:47 | INFO     | Connected to Binance API
+2026-05-23 08:08:47 | INFO     | Warming up with 300 candles...
+2026-05-23 08:08:48 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-23 08:08:48 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-23 08:08:53 | INFO     | [CYCLE_1] HOLD | Confidence: 0.480 < 0.724
+2026-05-23 08:08:53 | INFO     | Forbidden trade tracked: forbidden_1779523733.204046 (confidence: 0.480)
+2026-05-23 08:14:58 | INFO     | ============================================================
+2026-05-23 08:14:58 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-05-23 08:14:58 | INFO     | Mode: TESTNET
+2026-05-23 08:14:58 | INFO     | Symbol: DOGEUSDT
+2026-05-23 08:14:58 | INFO     | Initial Balance: 200.0 USDT
+2026-05-23 08:14:58 | INFO     | ============================================================
+2026-05-23 08:14:58 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-05-23 08:14:58 | INFO     | Connected to Binance API
+2026-05-23 08:14:58 | INFO     | Warming up with 300 candles...
+2026-05-23 08:14:58 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-05-23 08:14:58 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-05-23 08:15:04 | INFO     | [CYCLE_1] HOLD | Confidence: 0.475 < 0.725
+2026-05-23 08:15:04 | INFO     | Forbidden trade tracked: forbidden_1779524104.126207 (confidence: 0.475)
