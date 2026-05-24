@@ -1,4 +1,4 @@
-"""Data Manager - handles fetching and caching of market data"""
+"""Data Manager - handles fetching and caching of market data across multiple timeframes"""
 import pandas as pd
 from datetime import datetime
 from core.data_lineage import LineageTracker, DataSource, DataQuality, DataLineage
@@ -10,55 +10,101 @@ class DataManager:
         self.warmup_candles = config.getint('DATA', 'warmup_candles')
         self.base_timeframe = config.get('DATA', 'base_timeframe')
         
+        # Multi-timeframe configuration
+        self.timeframes = config.get_list('DATA', 'timeframes', fallback=['5m'])
+        
         # Маркировка для последних загруженных данных
-        self._last_lineage = None
+        self._last_lineage = {}  # Dict per timeframe
     
     async def load_warmup_data(self):
-        """Load historical data for warmup"""
-        klines = await self.binance.get_klines(
-            symbol=self.symbol,
-            interval=self.base_timeframe,
-            limit=self.warmup_candles
-        )
-        df = self._parse_klines(klines)
+        """Load historical data for warmup on all configured timeframes"""
+        result = {}
         
-        # Создаем маркировку для сырых данных
-        self._last_lineage = LineageTracker.create_from_source(
-            source=DataSource.BINANCE_API,
-            quality=DataQuality.HIGH,
-            metadata={
-                'candles_count': len(df),
-                'timeframe': self.base_timeframe,
-                'symbol': self.symbol
-            }
-        )
+        for tf in self.timeframes:
+            klines = await self.binance.get_klines(
+                symbol=self.symbol,
+                interval=tf,
+                limit=self.warmup_candles
+            )
+            df = self._parse_klines(klines)
+            
+            # Создаем маркировку для сырых данных
+            lineage = LineageTracker.create_from_source(
+                source=DataSource.BINANCE_API,
+                quality=DataQuality.HIGH,
+                metadata={
+                    'candles_count': len(df),
+                    'timeframe': tf,
+                    'symbol': self.symbol
+                }
+            )
+            
+            result[tf] = (df, lineage)
+            self._last_lineage[tf] = lineage
         
-        return df, self._last_lineage
+        return result
     
     async def fetch_latest(self, limit=50):
-        """Fetch latest candles"""
+        """Fetch latest candles on all configured timeframes"""
+        result = {}
+        
+        for tf in self.timeframes:
+            klines = await self.binance.get_klines(
+                symbol=self.symbol,
+                interval=tf,
+                limit=limit
+            )
+            df = self._parse_klines(klines)
+            
+            # Обновляем маркировку
+            lineage = LineageTracker.create_from_source(
+                source=DataSource.BINANCE_API,
+                quality=DataQuality.HIGH,
+                metadata={
+                    'candles_count': len(df),
+                    'timeframe': tf,
+                    'symbol': self.symbol
+                }
+            )
+            
+            result[tf] = (df, lineage)
+            self._last_lineage[tf] = lineage
+        
+        return result
+    
+    async def fetch_single_timeframe(self, timeframe: str, limit=50):
+        """Fetch data for a single timeframe"""
         klines = await self.binance.get_klines(
             symbol=self.symbol,
-            interval=self.base_timeframe,
+            interval=timeframe,
             limit=limit
         )
         df = self._parse_klines(klines)
         
-        # Обновляем маркировку
-        self._last_lineage = LineageTracker.create_from_source(
+        lineage = LineageTracker.create_from_source(
             source=DataSource.BINANCE_API,
             quality=DataQuality.HIGH,
             metadata={
                 'candles_count': len(df),
-                'timeframe': self.base_timeframe,
+                'timeframe': timeframe,
                 'symbol': self.symbol
             }
         )
         
-        return df, self._last_lineage
+        self._last_lineage[timeframe] = lineage
+        return df, lineage
     
-    def get_last_lineage(self):
-        """Получить последнюю маркировку данных"""
+    def get_last_lineage(self, timeframe: str = None):
+        """Получить последнюю маркировку данных
+        
+        Args:
+            timeframe: Specific TF or None for all
+            
+        Returns:
+            DataLineage or Dict[str, DataLineage]
+        """
+        if timeframe:
+            return self._last_lineage.get(timeframe)
         return self._last_lineage
     
     def _parse_klines(self, klines):

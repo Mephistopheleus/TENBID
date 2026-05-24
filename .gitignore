@@ -1,8 +1,38 @@
-# Examples
-TENBID/AUDIT_COMPLETE.md
+```
+# Compiled and build artifacts
+*.pyc
+__pycache__/
 
-Wait, that doesn't seem right. Let me reconsider.
+# Dependencies
+.venv/
+venv/
+node_modules/
 
-The file TENBID/AUDIT_COMPLETE.md appears to be a markdown documentation file, which should typically be version controlled as a source file rather than ignored. Since it's just a single markdown file being added and there are no build artifacts, dependencies, or temporary files in the changes, this shouldn't be ignored.
+# Logs and temp files
+*.log
+*.tmp
+*.swp
 
-(empty)
+# Environment
+.env
+.env.local
+.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Python cache
+.mypy_cache/
+.pytest_cache/
+
+# Build directories
+dist/
+build/
+target/
+```
