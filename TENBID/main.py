@@ -123,11 +123,16 @@ async def main():
     
     # Warmup - load historical data
     logger.info(f"Warming up with {config.getint('DATA', 'warmup_candles')} candles...")
-    candles, base_lineage = await data_mgr.load_warmup_data()
-    logger.info(f"Loaded {len(candles)} base candles with lineage: {base_lineage.source.value}")
+    all_data = await data_mgr.load_warmup_data()
+    base_tf = config.get('DATA', 'base_timeframe')
+    base_candles = all_data[base_tf][0]
+    base_lineage = all_data[base_tf][1]
+    logger.info(f"Loaded {len(base_candles)} base candles with lineage: {base_lineage.source.value}")
     
     # Build synthetic timeframes
-    synth_data = synth_tf.build_all(candles, base_lineage)
+    synth_data = synth_tf.build_all(base_candles, base_lineage)
+    # Merge with base data
+    all_data.update(synth_data)
     logger.info(f"Built {len(synth_data)} synthetic timeframes with lineage tracking")
     
     # Main trading loop
@@ -140,20 +145,23 @@ async def main():
             cycle_count += 1
             
             # Fetch new data
-            new_candles, new_lineage = await data_mgr.fetch_latest()
-            all_data = synth_tf.build_all(new_candles, new_lineage)
+            all_data = await data_mgr.fetch_latest()
+            base_tf = config.get('DATA', 'base_timeframe')
+            base_candles = all_data[base_tf][0]
+            base_lineage = all_data[base_tf][1]
+            synth_data = synth_tf.build_all(base_candles, base_lineage)
+            all_data.update(synth_data)
             
             # Analyze market
             analysis = market_analyzer.analyze(all_data)
             
             # Создаем контекст анализа
             symbol = config.get('GENERAL', 'symbol')
-            base_tf = '5m'
             
             context = AnalysisContext(
                 symbol=symbol,
                 timeframe=base_tf,
-                base_lineage=new_lineage
+                base_lineage=base_lineage
             )
             
             # Добавляем данные в контекст
