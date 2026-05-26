@@ -1,520 +1,338 @@
 """
-Multi-Timeframe Context Aggregator
+Multi-Timeframe Context Engine v2.0
+Центральный дирижёр таймфреймов для TENBID.
 
-Central hub for aggregating and analyzing market data across multiple timeframes.
-Provides hierarchical market view from D1 down to 5m.
+АРХИТЕКТУРА:
+- Не дублирует логику в каждом анализаторе
+- Синхронизирует временные фреймы, даёт базовые веса
+- Модули могут корректировать локально, но база едина
+- Настраиваемые влияния между ТФ (не жёсткие)
+- Загрузка старших ТФ для разогрева с корреляцией к текущим данным
 
-Key Features:
-- Aggregates data from 3+ timeframes (e.g., 1h, 15m, 5m)
-- Calculates cross-TF trend alignment
-- Detects TF conflicts (e.g., bullish on 5m, bearish on 1h)
-- Provides weighted confidence based on TF hierarchy
+СИСТЕМА ВЕСОВ:
+- Каждый ТФ имеет влияние на остальные (настраиваемое)
+- Автотюнер крутит эти веса на основе результатов
+- Матрица получает уже взвешенные векторы от всех ТФ
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass, field
 from datetime import datetime
 import logging
-
-from core.data_lineage import LineageTracker, DataLineage
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
 
+class TFImportance(Enum):
+    """Уровни важности таймфреймов."""
+    CRITICAL = 1.0
+    HIGH = 0.8
+    MEDIUM = 0.6
+    LOW = 0.4
+    WARMUP = 0.2
+
+
 @dataclass
-class TFAnalysis:
-    """Analysis result for a single timeframe."""
+class TFWeightConfig:
+    """Конфигурация весов для одного таймфрейма."""
     timeframe: str
-    trend: int  # 1=bullish, -1=bearish, 0=neutral
-    trend_strength: float  # 0.0 - 1.0
-    support: float
-    resistance: float
-    volume_score: float  # 0.0 - 1.0
-    atr: float
-    signal_confidence: float  # 0.0 - 1.0
-    lineage: Optional[DataLineage] = None
+    base_weight: float
+    influence_on_higher: float
+    influence_on_lower: float
+    decay_factor: float = 0.9
+    confidence_threshold: float = 0.5
 
 
 @dataclass
-class MultiTFContext:
-    """Aggregated multi-timeframe context."""
+class TFAnalysisResult:
+    """Результат анализа по одному таймфрейму."""
+    timeframe: str
+    timestamp: float
+    trend_direction: int
+    trend_strength: float
+    support_levels: List[float]
+    resistance_levels: List[float]
+    volume_profile: Dict[str, Any]
+    volatility: float
+    signal_confidence: float
+    analyzer_id: str
+    lineage_id: Optional[str] = None
+
+
+@dataclass
+class CrossTFConflict:
+    """Конфликт между таймфреймами."""
+    tf1: str
+    tf2: str
+    conflict_type: str
+    severity: float
+    description: str
+
+
+@dataclass
+class MultiTFContextOutput:
+    """Итоговый контекст для передачи в Матрицу."""
     symbol: str
-    timestamp: datetime
-    timeframes: List[str]  # Ordered from highest to lowest
-    
-    # Per-TF analysis
-    tf_analysis: Dict[str, TFAnalysis]
-    
-    # Cross-TF metrics
-    trend_alignment: float  # -1.0 (all bearish) to +1.0 (all bullish)
-    trend_conflicts: List[str]  # List of conflicting TF pairs
-    dominant_trend: str  # 'BULLISH', 'BEARISH', 'NEUTRAL', 'MIXED'
-    
-    # Key levels from higher TFs
+    timestamp: float
+    primary_tf: str
+    weighted_trend_score: float
+    trend_alignment: float
     major_support: float
     major_resistance: float
-    
-    # Composite confidence
-    composite_confidence: float  # Overall confidence in the context
-    
-    # Lineage tracking
-    lineage: Optional[DataLineage] = None
+    key_levels: List[Dict[str, Any]]
+    conflicts: List[CrossTFConflict]
+    conflict_penalty: float
+    volatility_profile: Dict[str, float]
+    composite_confidence: float
+    timeframes_analyzed: List[str]
+    lineage_id: Optional[str] = None
 
 
-@dataclass
-class TimeframeResult:
-    """Result for a single timeframe."""
-    timeframe: str
-    signal: int  # 1=bullish, -1=bearish, 0=neutral
-    confidence: float
-    details: Dict
-
-
-class MultiTFContextAggregator:
-    """
-    Aggregates analysis from multiple timeframes into unified context.
+class MultiTFContextEngine:
+    """Центральный движок мульти-таймфрейм контекста."""
     
-    Usage:
-        aggregator = MultiTFContextAggregator(config)
-        context = aggregator.aggregate(tf_analysis_dict)
-    """
-    
-    def __init__(self, config=None):
-        """
-        Initialize aggregator.
-        
-        Args:
-            config: Configuration with timeframe weights and hierarchy
-        """
-        self.config = config
-        
-        # Timeframe hierarchy (highest to lowest importance)
-        if config and hasattr(config, 'get_list'):
-            self.tf_hierarchy = config.get_list('MULTITF', 'timeframe_hierarchy', 
-                                                fallback=['1h', '15m', '5m'])
-        else:
-            self.tf_hierarchy = ['1h', '30m', '15m', '5m']
-        
-        # Weights for each TF (higher TF = more weight for trend direction)
-        self.tf_weights = {
-            '1h': 0.5,
-            '30m': 0.3,
-            '15m': 0.15,
-            '5m': 0.05
-        }
-        # Override with config if provided
-        if config and hasattr(config, 'has_option'):
-            for tf in self.tf_hierarchy:
-                weight_key = f'tf_weight_{tf}'
-                if config.has_option('MULTITF', weight_key):
-                    self.tf_weights[tf] = config.getfloat('MULTITF', weight_key)
-        
-        # Normalize weights
-        total_weight = sum(self.tf_weights.get(tf, 0.1) for tf in self.tf_hierarchy)
-        if total_weight > 0:
-            self.tf_weights = {tf: w/total_weight for tf, w in self.tf_weights.items()}
-        
-        # Weights for pattern aggregation
-        self.pattern_tf_weights = {
-            '1h': 0.4,
-            '30m': 0.25,
-            '15m': 0.2,
-            '5m': 0.15
+    def __init__(self, config: Optional[Dict] = None):
+        self.tf_configs: Dict[str, TFWeightConfig] = {
+            '5m': TFWeightConfig('5m', 1.0, 0.3, 0.0),
+            '15m': TFWeightConfig('15m', 0.8, 0.5, 0.4),
+            '30m': TFWeightConfig('30m', 0.7, 0.6, 0.5),
+            '1h': TFWeightConfig('1h', 0.6, 0.7, 0.6),
+            '2h': TFWeightConfig('2h', 0.5, 0.6, 0.5),
+            '4h': TFWeightConfig('4h', 0.4, 0.5, 0.4),
+            'D1': TFWeightConfig('D1', 0.3, 0.3, 0.3),
         }
         
-        # Weights for regime aggregation
-        self.regime_tf_weights = {
-            '1h': 0.5,
-            '30m': 0.25,
-            '15m': 0.15,
-            '5m': 0.1
-        }
+        if config:
+            self._load_config(config)
         
-        logger.info(f"MultiTFContextAggregator initialized with hierarchy: {self.tf_hierarchy}")
+        self.latest_analyses: Dict[str, TFAnalysisResult] = {}
+        self.analysis_history: List[TFAnalysisResult] = []
+        self.max_history_length = 100
+        self.cross_tf_weights = self._calculate_cross_tf_weights()
+        
+        logger.info(f"MultiTFContextEngine initialized with {len(self.tf_configs)} timeframes")
     
-    def aggregate(self, tf_analysis: Dict[str, dict], symbol: str) -> MultiTFContext:
-        """
-        Aggregate individual TF analyses into unified context.
-        
-        Args:
-            tf_analysis: Dict {timeframe: analysis_dict} from analyzers
-            symbol: Trading symbol
-            
-        Returns:
-            MultiTFContext with aggregated metrics
-        """
-        timestamp = datetime.now()
-        
-        # Convert raw analysis to TFAnalysis objects
-        parsed_analysis = {}
-        lineages = []
-        
-        for tf, analysis in tf_analysis.items():
-            if not analysis or 'error' in analysis:
-                logger.warning(f"No valid analysis for {tf}: {analysis.get('error', 'Unknown error')}")
-                continue
-            
-            tf_analysis_obj = TFAnalysis(
-                timeframe=tf,
-                trend=analysis.get('trend', 0),
-                trend_strength=analysis.get('trend_strength', 0.0),
-                support=analysis.get('support', 0.0),
-                resistance=analysis.get('resistance', 0.0),
-                volume_score=analysis.get('volume_score', 0.0),
-                atr=analysis.get('atr', 0.0),
-                signal_confidence=analysis.get('confidence', 0.0),
-                lineage=analysis.get('lineage')
-            )
-            parsed_analysis[tf] = tf_analysis_obj
-            
-            if tf_analysis_obj.lineage:
-                lineages.append(tf_analysis_obj.lineage)
-        
-        # Calculate cross-TF metrics
-        trend_alignment = self._calculate_trend_alignment(parsed_analysis)
-        trend_conflicts = self._detect_conflicts(parsed_analysis)
-        dominant_trend = self._determine_dominant_trend(parsed_analysis)
-        
-        # Get major levels from highest TF
-        major_support, major_resistance = self._get_major_levels(parsed_analysis)
-        
-        # Calculate composite confidence
-        composite_confidence = self._calculate_composite_confidence(
-            parsed_analysis, trend_alignment, len(trend_conflicts)
-        )
-        
-        # Create merged lineage
-        merged_lineage = None
-        if lineages:
-            merged_lineage = LineageTracker.merge_lineages(
-                lineages,
-                method="multi_tf_aggregation",
-                metadata={
-                    'timeframes': list(parsed_analysis.keys()),
-                    'trend_alignment': trend_alignment,
-                    'dominant_trend': dominant_trend
-                }
-            )
-        
-        return MultiTFContext(
-            symbol=symbol,
-            timestamp=timestamp,
-            timeframes=list(parsed_analysis.keys()),
-            tf_analysis=parsed_analysis,
-            trend_alignment=trend_alignment,
-            trend_conflicts=trend_conflicts,
-            dominant_trend=dominant_trend,
-            major_support=major_support,
-            major_resistance=major_resistance,
-            composite_confidence=composite_confidence,
-            lineage=merged_lineage
-        )
+    def _load_config(self, config: Dict):
+        if 'tf_weights' in config:
+            for tf, weight_data in config['tf_weights'].items():
+                if tf in self.tf_configs:
+                    cfg = self.tf_configs[tf]
+                    cfg.base_weight = weight_data.get('base', cfg.base_weight)
+                    cfg.influence_on_higher = weight_data.get('inf_higher', cfg.influence_on_higher)
+                    cfg.influence_on_lower = weight_data.get('inf_lower', cfg.influence_on_lower)
     
-    def _calculate_trend_alignment(self, tf_analysis: Dict[str, TFAnalysis]) -> float:
-        """
-        Calculate how aligned trends are across timeframes.
+    def _calculate_cross_tf_weights(self) -> Dict[Tuple[str, str], float]:
+        weights = {}
+        tf_list = list(self.tf_configs.keys())
         
-        Returns:
-            float: -1.0 (all bearish) to +1.0 (all bullish), 0 = mixed
-        """
-        if not tf_analysis:
-            return 0.0
+        for tf1 in tf_list:
+            for tf2 in tf_list:
+                if tf1 == tf2:
+                    weights[(tf1, tf2)] = 1.0
+                    continue
+                
+                cfg1 = self.tf_configs[tf1]
+                idx1, idx2 = tf_list.index(tf1), tf_list.index(tf2)
+                
+                if idx1 < idx2:
+                    weight = cfg1.influence_on_lower * self.tf_configs[tf2].base_weight
+                else:
+                    weight = cfg1.influence_on_higher * self.tf_configs[tf2].base_weight
+                
+                weights[(tf1, tf2)] = weight
         
-        weighted_sum = 0.0
+        return weights
+    
+    def update_weights(self, new_weights: Dict[str, Dict]):
+        for tf, params in new_weights.items():
+            if tf in self.tf_configs:
+                cfg = self.tf_configs[tf]
+                if 'base_weight' in params:
+                    cfg.base_weight = params['base_weight']
+                if 'influence_on_higher' in params:
+                    cfg.influence_on_higher = params['influence_on_higher']
+                if 'influence_on_lower' in params:
+                    cfg.influence_on_lower = params['influence_on_lower']
+        
+        self.cross_tf_weights = self._calculate_cross_tf_weights()
+        logger.info("MultiTF weights updated by Autotuner")
+    
+    def add_analysis(self, result: TFAnalysisResult):
+        self.latest_analyses[result.timeframe] = result
+        self.analysis_history.append(result)
+        
+        if len(self.analysis_history) > self.max_history_length:
+            self.analysis_history = self.analysis_history[-self.max_history_length:]
+        
+        logger.debug(f"Added analysis for {result.timeframe}: trend={result.trend_direction}, conf={result.signal_confidence}")
+    
+    def get_context(self, symbol: str, primary_tf: str = '5m') -> Optional[MultiTFContextOutput]:
+        if not self.latest_analyses:
+            logger.warning("No analyses available for context generation")
+            return None
+        
+        active_tfs = [
+            tf for tf, result in self.latest_analyses.items()
+            if result.signal_confidence >= self.tf_configs.get(tf, TFWeightConfig(tf, 0.5, 0, 0)).confidence_threshold
+        ]
+        
+        if len(active_tfs) < 1:
+            logger.warning("No active TFs with sufficient confidence")
+            return None
+        
+        weighted_trend_score = 0.0
         total_weight = 0.0
         
-        for tf, analysis in tf_analysis.items():
-            weight = self.tf_weights.get(tf, 0.1)
-            weighted_sum += analysis.trend * weight
-            total_weight += weight
+        for tf in active_tfs:
+            result = self.latest_analyses[tf]
+            weight = self.tf_configs.get(tf, TFWeightConfig(tf, 0.5, 0, 0)).base_weight
+            cross_weight = self._get_cross_tf_influence(tf, active_tfs)
+            effective_weight = weight * cross_weight
+            
+            weighted_trend_score += result.trend_direction * result.signal_confidence * effective_weight
+            total_weight += effective_weight
         
-        if total_weight == 0:
-            return 0.0
+        if total_weight > 0:
+            weighted_trend_score /= total_weight
         
-        return weighted_sum / total_weight
-    
-    def _detect_conflicts(self, tf_analysis: Dict[str, TFAnalysis]) -> List[str]:
-        """
-        Detect conflicts between adjacent timeframes.
+        trend_alignment = self._calculate_trend_alignment(active_tfs)
+        major_support, major_resistance, key_levels = self._aggregate_key_levels(active_tfs)
+        conflicts = self._detect_conflicts(active_tfs)
+        conflict_penalty = sum(c.severity for c in conflicts) * 0.1
         
-        Returns:
-            List of conflict descriptions (e.g., "1h bearish vs 15m bullish")
-        """
-        conflicts = []
-        sorted_tfs = sorted(
-            tf_analysis.keys(),
-            key=lambda x: self.tf_hierarchy.index(x) if x in self.tf_hierarchy else 999
+        volatility_profile = {tf: result.volatility for tf, result in self.latest_analyses.items() if tf in active_tfs}
+        
+        base_confidence = np.mean([self.latest_analyses[tf].signal_confidence for tf in active_tfs])
+        composite_confidence = max(0.0, base_confidence - conflict_penalty)
+        
+        output = MultiTFContextOutput(
+            symbol=symbol,
+            timestamp=datetime.now().timestamp(),
+            primary_tf=primary_tf,
+            weighted_trend_score=weighted_trend_score,
+            trend_alignment=trend_alignment,
+            major_support=major_support,
+            major_resistance=major_resistance,
+            key_levels=key_levels,
+            conflicts=conflicts,
+            conflict_penalty=conflict_penalty,
+            volatility_profile=volatility_profile,
+            composite_confidence=composite_confidence,
+            timeframes_analyzed=active_tfs
         )
         
-        for i in range(len(sorted_tfs) - 1):
-            higher_tf = sorted_tfs[i]
-            lower_tf = sorted_tfs[i + 1]
+        logger.info(f"MultiTF context for {symbol}: trend={weighted_trend_score:.2f}, alignment={trend_alignment:.2f}, conf={composite_confidence:.2f}")
+        return output
+    
+    def _get_cross_tf_influence(self, target_tf: str, active_tfs: List[str]) -> float:
+        total_influence = 0.0
+        for other_tf in active_tfs:
+            if other_tf == target_tf:
+                continue
+            influence = self.cross_tf_weights.get((other_tf, target_tf), 0.1)
+            total_influence += influence
+        return 1.0 + (total_influence / len(active_tfs)) if active_tfs else 1.0
+    
+    def _calculate_trend_alignment(self, active_tfs: List[str]) -> float:
+        if len(active_tfs) < 2:
+            return 1.0
+        
+        directions = [self.latest_analyses[tf].trend_direction for tf in active_tfs]
+        majority_direction = max(set(directions), key=directions.count)
+        agreement_count = directions.count(majority_direction)
+        
+        return agreement_count / len(active_tfs)
+    
+    def _aggregate_key_levels(self, active_tfs: List[str]) -> Tuple[float, float, List[Dict]]:
+        all_supports = []
+        all_resistances = []
+        key_levels = []
+        
+        for tf in active_tfs:
+            result = self.latest_analyses[tf]
+            weight = self.tf_configs.get(tf, TFWeightConfig(tf, 0.5, 0, 0)).base_weight
             
-            higher_trend = tf_analysis[higher_tf].trend
-            lower_trend = tf_analysis[lower_tf].trend
+            for s in result.support_levels:
+                all_supports.append((s, weight, tf))
+            for r in result.resistance_levels:
+                all_resistances.append((r, weight, tf))
+        
+        clustered_supports = self._cluster_levels(all_supports, tolerance_pct=0.005)
+        clustered_resistances = self._cluster_levels(all_resistances, tolerance_pct=0.005)
+        
+        major_support = clustered_supports[0][0] if clustered_supports else 0.0
+        major_resistance = clustered_resistances[-1][0] if clustered_resistances else 0.0
+        
+        for level, strength, tf in clustered_supports[:3]:
+            key_levels.append({'type': 'support', 'price': level, 'strength': strength, 'timeframe': tf})
+        for level, strength, tf in clustered_resistances[:3]:
+            key_levels.append({'type': 'resistance', 'price': level, 'strength': strength, 'timeframe': tf})
+        
+        return major_support, major_resistance, key_levels
+    
+    def _cluster_levels(self, levels: List[Tuple[float, float, str]], tolerance_pct: float = 0.005) -> List[Tuple[float, float, str]]:
+        if not levels:
+            return []
+        
+        sorted_levels = sorted(levels, key=lambda x: x[0])
+        clusters = []
+        current_cluster = [sorted_levels[0]]
+        
+        for i in range(1, len(sorted_levels)):
+            prev_price = current_cluster[-1][0]
+            curr_price = sorted_levels[i][0]
             
-            if higher_trend != 0 and lower_trend != 0 and higher_trend != lower_trend:
-                higher_dir = "bullish" if higher_trend > 0 else "bearish"
-                lower_dir = "bullish" if lower_trend > 0 else "bearish"
-                conflicts.append(f"{higher_tf} {higher_dir} vs {lower_tf} {lower_dir}")
+            if abs(curr_price - prev_price) / prev_price <= tolerance_pct:
+                current_cluster.append(sorted_levels[i])
+            else:
+                avg_price = sum(l[0] for l in current_cluster) / len(current_cluster)
+                total_strength = sum(l[1] for l in current_cluster)
+                dominant_tf = max(set(l[2] for l in current_cluster), key=[l[2] for l in current_cluster].count)
+                clusters.append((avg_price, total_strength, dominant_tf))
+                current_cluster = [sorted_levels[i]]
+        
+        if current_cluster:
+            avg_price = sum(l[0] for l in current_cluster) / len(current_cluster)
+            total_strength = sum(l[1] for l in current_cluster)
+            dominant_tf = max(set(l[2] for l in current_cluster), key=[l[2] for l in current_cluster].count)
+            clusters.append((avg_price, total_strength, dominant_tf))
+        
+        return clusters
+    
+    def _detect_conflicts(self, active_tfs: List[str]) -> List[CrossTFConflict]:
+        conflicts = []
+        
+        for i, tf1 in enumerate(active_tfs):
+            for tf2 in active_tfs[i+1:]:
+                result1 = self.latest_analyses[tf1]
+                result2 = self.latest_analyses[tf2]
+                
+                if result1.trend_direction != 0 and result2.trend_direction != 0:
+                    if result1.trend_direction != result2.trend_direction:
+                        severity = min(result1.signal_confidence, result2.signal_confidence)
+                        conflicts.append(CrossTFConflict(
+                            tf1=tf1,
+                            tf2=tf2,
+                            conflict_type='trend_opposite',
+                            severity=severity,
+                            description=f"{tf1} {'bullish' if result1.trend_direction > 0 else 'bearish'} vs {tf2} {'bullish' if result2.trend_direction > 0 else 'bearish'}"
+                        ))
         
         return conflicts
     
-    def _determine_dominant_trend(self, tf_analysis: Dict[str, TFAnalysis]) -> str:
-        """
-        Determine the dominant trend considering TF hierarchy.
-        """
-        if not tf_analysis:
-            return "UNKNOWN"
-        
-        alignment = self._calculate_trend_alignment(tf_analysis)
-        
-        if abs(alignment) < 0.3:
-            return "MIXED"
-        elif alignment >= 0.3:
-            return "BULLISH"
-        else:
-            return "BEARISH"
-    
-    def _get_major_levels(self, tf_analysis: Dict[str, TFAnalysis]) -> Tuple[float, float]:
-        """
-        Get major support/resistance from highest available TF.
-        """
-        if not tf_analysis:
-            return 0.0, 0.0
-        
-        # Find highest TF with valid data
-        for tf in self.tf_hierarchy:
-            if tf in tf_analysis:
-                analysis = tf_analysis[tf]
-                if analysis.support > 0 and analysis.resistance > 0:
-                    return analysis.support, analysis.resistance
-        
-        # Fallback to any available TF
-        for tf, analysis in tf_analysis.items():
-            if analysis.support > 0 and analysis.resistance > 0:
-                return analysis.support, analysis.resistance
-        
-        return 0.0, 0.0
-    
-    def _calculate_composite_confidence(
-        self,
-        tf_analysis: Dict[str, TFAnalysis],
-        trend_alignment: float,
-        conflict_count: int
-    ) -> float:
-        """
-        Calculate overall confidence in the multi-TF context.
-        
-        Higher confidence when:
-        - Trends are aligned across TFs
-        - Higher TFs have strong signals
-        - Few conflicts
-        """
-        if not tf_analysis:
-            return 0.0
-        
-        # Base confidence from individual TF confidences (weighted)
-        base_confidence = 0.0
-        total_weight = 0.0
-        
-        for tf, analysis in tf_analysis.items():
-            weight = self.tf_weights.get(tf, 0.1)
-            base_confidence += analysis.signal_confidence * weight
-            total_weight += weight
-        
-        if total_weight > 0:
-            base_confidence /= total_weight
-        else:
-            base_confidence = 0.0
-        
-        # Alignment bonus (up to +0.3)
-        alignment_bonus = abs(trend_alignment) * 0.3
-        
-        # Conflict penalty (up to -0.2 per conflict)
-        conflict_penalty = min(0.4, conflict_count * 0.2)
-        
-        # Higher TF strength bonus
-        higher_tf_strength = 0.0
-        for tf in ['1h', '30m']:
-            if tf in tf_analysis:
-                higher_tf_strength = max(higher_tf_strength, tf_analysis[tf].trend_strength * 0.2)
-        
-        composite = base_confidence + alignment_bonus + higher_tf_strength - conflict_penalty
-        return max(0.0, min(1.0, composite))
-    
-    def aggregate_pattern_signals(self, per_timeframe_results: Dict[str, Dict]) -> Dict:
-        """
-        Aggregate pattern recognition signals across timeframes.
-        
-        Args:
-            per_timeframe_results: Dict {timeframe: result_dict}
-            
-        Returns:
-            Dict with aggregated signal, confidence, and details
-        """
-        if not per_timeframe_results:
-            return {"signal": 0, "confidence": 0.0, "details": {}}
-        
-        total_score = 0.0
-        total_weight = 0.0
-        all_patterns = []
-        
-        for tf, result in per_timeframe_results.items():
-            weight = self.pattern_tf_weights.get(tf, 0.1)
-            signal = result.get('signal', 0)
-            confidence = result.get('confidence', 0.0)
-            
-            if signal != 0 and confidence > 0:
-                total_score += signal * confidence * weight
-                total_weight += weight
-                
-                # Collect patterns
-                candle_patterns = result.get('candle_patterns', [])
-                chart_patterns = result.get('chart_patterns', [])
-                for p in candle_patterns + chart_patterns:
-                    p_copy = p.copy()
-                    p_copy['timeframe'] = tf
-                    all_patterns.append(p_copy)
-        
-        if total_weight == 0:
-            return {"signal": 0, "confidence": 0.0, "details": {"patterns": all_patterns}}
-        
-        normalized_score = total_score / total_weight
-        signal = 1 if normalized_score > 0 else (-1 if normalized_score < 0 else 0)
-        confidence = min(1.0, abs(normalized_score))
-        
-        # Build multi-TF context
-        multi_tf_context = {
-            "timeframes_analyzed": list(per_timeframe_results.keys()),
-            "pattern_count": len(all_patterns),
-            "dominant_patterns": [p for p in all_patterns if p.get('strength', 0) > 0.7][:3]
-        }
-        
+    def get_statistics(self) -> Dict:
         return {
-            "signal": signal,
-            "confidence": confidence,
-            "details": {
-                "patterns": all_patterns,
-                "per_tf_signals": {tf: r.get('signal', 0) for tf, r in per_timeframe_results.items()}
-            },
-            "multi_tf_context": multi_tf_context
+            'timeframes_configured': len(self.tf_configs),
+            'active_analyses': len(self.latest_analyses),
+            'history_size': len(self.analysis_history),
+            'tf_configs': {
+                tf: {'base_weight': cfg.base_weight, 'inf_higher': cfg.influence_on_higher, 'inf_lower': cfg.influence_on_lower}
+                for tf, cfg in self.tf_configs.items()
+            }
         }
 
-    def aggregate_regime_signals(self, per_timeframe_results: Dict[str, Dict]) -> Dict:
-        """
-        Aggregate market regime signals across timeframes.
-        
-        Args:
-            per_timeframe_results: Dict {timeframe: result_dict}
-            
-        Returns:
-            Dict with aggregated regime, confidence, and metrics
-        """
-        if not per_timeframe_results:
-            return {"regime": "UNKNOWN", "confidence": 0.0, "metrics": {}}
-        
-        # Count regimes
-        regime_counts = {"TREND_UP": 0, "TREND_DOWN": 0, "RANGING": 0, "HIGH_VOLATILITY": 0}
-        weighted_score = 0.0
-        total_weight = 0.0
-        all_metrics = {}
-        
-        for tf, result in per_timeframe_results.items():
-            weight = self.regime_tf_weights.get(tf, 0.1)
-            regime = result.get('regime', 'UNKNOWN')
-            confidence = result.get('confidence', 0.0)
-            
-            if regime in regime_counts:
-                regime_counts[regime] += weight
-            
-            # Convert regime to numeric score for averaging
-            if regime == "TREND_UP":
-                weighted_score += 1.0 * confidence * weight
-            elif regime == "TREND_DOWN":
-                weighted_score += -1.0 * confidence * weight
-            elif regime == "RANGING":
-                weighted_score += 0.0 * confidence * weight
-            elif regime == "HIGH_VOLATILITY":
-                # High volatility is neutral but important
-                pass
-            
-            total_weight += weight
-            all_metrics[tf] = result.get('metrics', {})
-        
-        if total_weight == 0:
-            return {"regime": "UNKNOWN", "confidence": 0.0, "metrics": all_metrics}
-        
-        # Determine dominant regime
-        dominant_regime = max(regime_counts, key=regime_counts.get)
-        
-        # Calculate confidence based on agreement
-        max_count = max(regime_counts.values())
-        confidence = max_count / total_weight if total_weight > 0 else 0.0
-        
-        # Build multi-TF context
-        multi_tf_context = {
-            "timeframes_analyzed": list(per_timeframe_results.keys()),
-            "regime_distribution": regime_counts,
-            "dominant_regime": dominant_regime
-        }
-        
-        return {
-            "regime": dominant_regime,
-            "confidence": min(1.0, confidence),
-            "metrics": all_metrics,
-            "multi_tf_context": multi_tf_context
-        }
-    
-    def get_context_summary(self, context: MultiTFContext) -> str:
-        """
-        Generate human-readable summary of multi-TF context.
-        """
-        lines = [
-            f"Multi-TF Context for {context.symbol} @ {context.timestamp}",
-            f"Dominant Trend: {context.dominant_trend}",
-            f"Trend Alignment: {context.trend_alignment:.2f}",
-            f"Composite Confidence: {context.composite_confidence:.2f}",
-            "",
-            "Timeframe Analysis:"
-        ]
-        
-        for tf in context.timeframes:
-            analysis = context.tf_analysis.get(tf)
-            if analysis:
-                trend_dir = "→" if analysis.trend == 0 else ("↑" if analysis.trend > 0 else "↓")
-                lines.append(
-                    f"  {tf}: {trend_dir} (strength={analysis.trend_strength:.2f}, "
-                    f"conf={analysis.signal_confidence:.2f}) "
-                    f"S:{analysis.support:.2f} R:{analysis.resistance:.2f}"
-                )
-        
-        if context.trend_conflicts:
-            lines.append("")
-            lines.append("Conflicts Detected:")
-            for conflict in context.trend_conflicts:
-                lines.append(f"  ⚠️  {conflict}")
-        
-        lines.append("")
-        lines.append(f"Major Levels: Support={context.major_support:.2f}, Resistance={context.major_resistance:.2f}")
-        
-        return "\n".join(lines)
 
-
-# Helper function for use in other modules
-def create_multi_tf_context(config, tf_analysis: Dict[str, dict], symbol: str) -> MultiTFContext:
-    """
-    Convenience function to create multi-TF context.
-    
-    Args:
-        config: Application config
-        tf_analysis: Dict of per-TF analysis results
-        symbol: Trading symbol
-        
-    Returns:
-        MultiTFContext object
-    """
-    aggregator = MultiTFContextAggregator(config)
-    return aggregator.aggregate(tf_analysis, symbol)
+multi_tf_engine = MultiTFContextEngine()
