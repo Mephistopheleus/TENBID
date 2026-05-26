@@ -8,7 +8,7 @@ BTC Correlation Analyzer - Multi-Timeframe Support
 import pandas as pd
 import numpy as np
 from typing import Dict, Optional, Tuple, List
-from core.data_lineage import AnalysisContext, LineageTracker, DataSource, DataQuality
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
 from datetime import datetime, timedelta
 from analyzers.multi_tf_context import MultiTFContextAggregator, TFAnalysis
 

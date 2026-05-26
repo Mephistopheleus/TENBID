@@ -7,7 +7,7 @@ Pattern Recognition Analyzer
 import numpy as np
 from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
-from core.data_lineage import DataLineage, DataSource, DataQuality
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
 from .multi_tf_context import MultiTFContextAggregator, TimeframeResult
 
 class PatternRecognitionAnalyzer:

@@ -1,7 +1,7 @@
 """Market Analyzer - analyzes price action, trends, support/resistance"""
 import pandas as pd
 import numpy as np
-from core.data_lineage import LineageTracker, DataSource, DataQuality, DataLineage
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
 
 class MarketAnalyzer:
     def __init__(self, config):

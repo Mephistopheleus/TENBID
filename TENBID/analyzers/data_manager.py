@@ -1,7 +1,7 @@
 """Data Manager - handles fetching and caching of market data across multiple timeframes"""
 import pandas as pd
 from datetime import datetime
-from core.data_lineage import LineageTracker, DataSource, DataQuality, DataLineage
+from core.data_lineage import DataLineageManager, LineageNode
 
 class DataManager:
     def __init__(self, config, binance_connector):
