@@ -1,499 +1,367 @@
 """
-Volume Profile Analyzer - Volume-based Support/Resistance Detection.
-Multi-Timeframe Support Enabled.
-
-Analyzes volume distribution across price levels to identify:
-- POC (Point of Control) - price with highest volume
-- Value Area (VA) - range containing 70% of volume
-- High/Low Volume Nodes - support/resistance zones
-
-Supports analysis across multiple timeframes simultaneously.
+TENBID v2.0 - Volume Profile Analyzer
+Анализ распределения объемов по ценовым уровням.
+Выявляет ключевые зоны ликвидности (POC, Value Area).
+Работает в синергии со стаканом для точного прогнозирования.
 """
 
-import logging
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
-import numpy as np
-import pandas as pd
-from core.data_lineage import AnalysisContext, LineageTracker, DataSource, DataQuality
-from analyzers.multi_tf_context import MultiTFContextAggregator
+from dataclasses import dataclass, field
+from datetime import datetime
+import logging
+import hashlib
 
 logger = logging.getLogger(__name__)
 
 @dataclass
-class VolumeProfileResult:
-    """Volume profile analysis result."""
-    poc: float  # Point of Control price
-    value_area_high: float
-    value_area_low: float
-    value_area_width: float
-    current_price_vs_poc: float  # % distance from POC
-    volume_distribution: str  # 'BALANCED', 'SKEWED_UP', 'SKEWED_DOWN'
-    support_levels: List[float]
-    resistance_levels: List[float]
-    confidence: float
-    timeframe: Optional[str] = None
+class VolumeNode:
+    """Узел объема на определенном ценовом уровне"""
+    price: float
+    volume: float
+    buy_volume: float = 0.0
+    sell_volume: float = 0.0
+    trade_count: int = 0
+    
+    @property
+    def total_volume(self) -> float:
+        return self.volume
+    
+    @property
+    def imbalance(self) -> float:
+        """Дисбаланс между покупками и продажами"""
+        if self.volume == 0:
+            return 0.0
+        return (self.buy_volume - self.sell_volume) / self.volume
 
+@dataclass
+class VolumeProfileResult:
+    """Результат анализа объемного профиля"""
+    poc_price: float = 0.0  # Point of Control - цена с максимальным объемом
+    poc_volume: float = 0.0
+    value_area_high: float = 0.0  # Верхняя граница области ценности
+    value_area_low: float = 0.0   # Нижняя граница области ценности
+    value_area_volume: float = 0.0
+    total_volume: float = 0.0
+    nodes: List[VolumeNode] = field(default_factory=list)
+    profile_type: str = "balanced"  # balanced, bullish, bearish
+    confidence: float = 0.0
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    id: str = ""
+    
+    def __post_init__(self):
+        if not self.id:
+            self.id = hashlib.md5(f"{self.timestamp.isoformat()}{self.poc_price}".encode()).hexdigest()[:12]
+    
+    def to_dict(self) -> Dict:
+        return {
+            "poc_price": self.poc_price,
+            "value_area_high": self.value_area_high,
+            "value_area_low": self.value_area_low,
+            "profile_type": self.profile_type,
+            "confidence": self.confidence,
+            "total_volume": self.total_volume,
+            "timestamp": self.timestamp.isoformat(),
+            "id": self.id
+        }
 
 class VolumeProfileAnalyzer:
-    def __init__(self, config=None, lookback_bars: int = 100, value_area_percent: float = 0.70):
-        """
-        Initialize Volume Profile Analyzer with multi-TF support.
-        
-        Args:
-            config: Application configuration
-            lookback_bars: Number of bars to analyze
-            value_area_percent: Percentage of volume in value area (default 70%)
-        """
-        self.config = config
-        self.lookback_bars = lookback_bars
-        self.value_area_percent = value_area_percent
-        
-        # Minimum bins for profile
-        self.NUM_PRICE_BINS = 50
-        
-        # Timeframes for analysis
-        self.timeframes = ['1h', '15m', '5m']
-        if config and hasattr(config, 'get_list'):
-            self.timeframes = config.get_list('MULTITF', 'timeframe_hierarchy', 
-                                              fallback=['1h', '15m', '5m'])
-        
-        # Aggregator for multi-TF results
-        self.aggregator = MultiTFContextAggregator(config) if config else MultiTFContextAggregator()
-        
-        logger.info(f"VolumeProfileAnalyzer initialized (lookback={lookback_bars}, VA={value_area_percent*100}%, multi_tf=True)")
+    """
+    Анализатор объемного профиля.
+    Строит распределение объемов по ценовым уровням,
+    выявляет ключевые зоны поддержки/сопротивления.
+    """
     
-    def analyze(self, context: AnalysisContext, symbol: str = None) -> Dict:
+    VALUE_AREA_PERCENT = 0.70  # 70% объема - стандартная область ценности
+    
+    def __init__(self, price_precision: int = 2, volume_buckets: int = 50):
         """
-        Analyze volume profile across all available timeframes.
+        Инициализация анализатора.
         
         Args:
-            context: AnalysisContext with market data
-            symbol: Trading symbol
+            price_precision: Точность цены для группировки
+            volume_buckets: Количество ценовых уровней (корзин)
+        """
+        self.price_precision = price_precision
+        self.volume_buckets = volume_buckets
+        logger.info(f"VolumeProfileAnalyzer инициализирован (buckets={volume_buckets})")
+    
+    def analyze_candles(self, 
+                       candles: List[Dict], 
+                       timeframe: str = "5m") -> VolumeProfileResult:
+        """
+        Анализ свечных данных для построения объемного профиля.
+        
+        Args:
+            candles: Список свечей с полями: open, high, low, close, volume
+            timeframe: Таймфрейм свечей
             
         Returns:
-            Dict with aggregated results and multi-TF context
+            VolumeProfileResult с результатами анализа
         """
-        try:
-            # Collect data from all available timeframes
-            tf_data = self._collect_all_timeframe_data(context, symbol)
+        if not candles or len(candles) < 2:
+            logger.warning("Недостаточно данных для анализа объема")
+            return VolumeProfileResult()
+        
+        # Определение диапазона цен
+        all_prices = []
+        for candle in candles:
+            all_prices.extend([candle['low'], candle['high']])
+        
+        min_price = min(all_prices)
+        max_price = max(all_prices)
+        
+        if min_price == max_price:
+            return VolumeProfileResult()
+        
+        # Создание ценовых корзин
+        step = (max_price - min_price) / self.volume_buckets
+        buckets: Dict[float, VolumeNode] = {}
+        
+        for i in range(self.volume_buckets):
+            bucket_price = round(min_price + i * step, self.price_precision)
+            buckets[bucket_price] = VolumeNode(price=bucket_price, volume=0.0)
+        
+        # Распределение объемов по корзинам (упрощенно - по цене закрытия)
+        total_volume = 0.0
+        for candle in candles:
+            close_price = candle['close']
+            volume = candle.get('volume', 0)
             
-            if not tf_data:
-                lineage = LineageTracker.create_calculated(
-                    method="volume_profile_no_data",
-                    dependencies=[context.data_lineage] if context.data_lineage else [],
-                    quality=DataQuality.VERY_LOW,
-                    metadata={'error': 'No data available on any timeframe'}
-                )
-                return {
-                    "error": "No data available",
-                    "confidence": 0.0,
-                    "lineage": lineage
-                }
+            # Нахождение ближайшей корзины
+            bucket_idx = int((close_price - min_price) / step)
+            bucket_idx = min(bucket_idx, self.volume_buckets - 1)
+            bucket_price = round(min_price + bucket_idx * step, self.price_precision)
             
-            # Analyze each timeframe separately
-            per_timeframe_results = {}
-            lineages = []
-            
-            for tf, (df, current_price, lineage) in tf_data.items():
-                result = self._analyze_single_timeframe(df, current_price, tf, lineage)
-                if result and 'error' not in result:
-                    per_timeframe_results[tf] = result
-                    if result.get('lineage'):
-                        lineages.append(result['lineage'])
-            
-            if not per_timeframe_results:
-                lineage = LineageTracker.create_calculated(
-                    method="volume_profile_analysis_failed",
-                    dependencies=[context.data_lineage] if context.data_lineage else [],
-                    quality=DataQuality.LOW,
-                    metadata={'error': 'Analysis failed on all timeframes'}
-                )
-                return {
-                    "error": "Analysis failed",
-                    "confidence": 0.0,
-                    "lineage": lineage
-                }
-            
-            # Aggregate results using MultiTFContextAggregator
-            # Convert to format expected by aggregator
-            tf_analysis_for_aggregator = {}
-            for tf, result in per_timeframe_results.items():
-                # Determine trend from volume distribution
-                trend = 1 if result.get('volume_distribution') == 'SKEWED_UP' else \
-                       (-1 if result.get('volume_distribution') == 'SKEWED_DOWN' else 0)
+            if bucket_price in buckets:
+                buckets[bucket_price].volume += volume
+                buckets[bucket_price].trade_count += 1
                 
-                tf_analysis_for_aggregator[tf] = {
-                    'trend': trend,
-                    'trend_strength': abs(result.get('current_price_vs_poc', 0)) / 100,
-                    'support': result.get('support_levels', [0])[0] if result.get('support_levels') else 0,
-                    'resistance': result.get('resistance_levels', [0])[0] if result.get('resistance_levels') else 0,
-                    'volume_score': result.get('confidence', 0),
-                    'atr': 0,
-                    'confidence': result.get('confidence', 0)
-                }
+                # Оценка buy/sell объема (упрощенно)
+                if candle['close'] >= candle['open']:
+                    buckets[bucket_price].buy_volume += volume
+                else:
+                    buckets[bucket_price].sell_volume += volume
             
-            multi_tf_context = self.aggregator.aggregate(tf_analysis_for_aggregator, symbol or "UNKNOWN")
-            
-            # Build final result
-            final_result = {
-                "timeframes_analyzed": list(per_timeframe_results.keys()),
-                "per_timeframe_results": per_timeframe_results,
-                "multi_tf_context": {
-                    "dominant_trend": multi_tf_context.dominant_trend,
-                    "trend_alignment": multi_tf_context.trend_alignment,
-                    "composite_confidence": multi_tf_context.composite_confidence,
-                    "trend_conflicts": multi_tf_context.trend_conflicts
-                },
-                "aggregate_poc": np.mean([r['poc'] for r in per_timeframe_results.values()]),
-                "aggregate_value_area": {
-                    "high": np.mean([r['value_area_high'] for r in per_timeframe_results.values()]),
-                    "low": np.mean([r['value_area_low'] for r in per_timeframe_results.values()])
-                },
-                "dominant_distribution": self._get_dominant_distribution(per_timeframe_results),
-                "confidence": multi_tf_context.composite_confidence,
-                "lineage": multi_tf_context.lineage
-            }
-            
-            context.add_result("VolumeProfile", final_result, multi_tf_context.lineage)
-            return final_result
-            
-        except Exception as e:
-            lineage = LineageTracker.create_calculated(
-                method="volume_profile_error",
-                dependencies=[context.data_lineage] if context.data_lineage else [],
-                quality=DataQuality.VERY_LOW,
-                metadata={'error': str(e)}
-            )
-            return {
-                "error": str(e),
-                "confidence": 0.0,
-                "lineage": lineage
-            }
-    
-    def _collect_all_timeframe_data(self, context: AnalysisContext, symbol: str) -> Dict[str, Tuple]:
-        """
-        Collect data from all available timeframes (base + synthetic).
-        Returns: dict {timeframe: (df, current_price, lineage)}
-        """
-        tf_data = {}
+            total_volume += volume
         
-        # Check base market data
-        base_df = context.get_data(DataSource.MARKET_DATA, symbol=symbol)
-        if base_df is not None and not base_df.empty:
-            current_price = base_df['close'].iloc[-1]
-            tf_data[context.timeframe] = (base_df, current_price, context.data_lineage)
+        # Конвертация в список
+        nodes = [node for node in buckets.values() if node.volume > 0]
+        nodes.sort(key=lambda x: x.price)
         
-        # Check synthetic timeframes
-        for tf in self.timeframes:
-            synthetic_df = context.get_data(DataSource.SYNTHETIC_TF, timeframe=tf)
-            if synthetic_df is not None and not synthetic_df.empty:
-                synthetic_lineage = LineageTracker.create_calculated(
-                    method=f"synthetic_{tf}",
-                    dependencies=[context.data_lineage] if context.data_lineage else [],
-                    quality=DataQuality.MEDIUM,
-                    metadata={'timeframe': tf, 'source': 'synthetic'}
-                )
-                current_price = synthetic_df['close'].iloc[-1]
-                tf_data[tf] = (synthetic_df, current_price, synthetic_lineage)
+        if not nodes:
+            return VolumeProfileResult()
         
-        return tf_data
-    
-    def _analyze_single_timeframe(self, df: pd.DataFrame, current_price: float, 
-                                   timeframe: str, lineage) -> Dict:
-        """Analyze volume profile on a single timeframe."""
-        if len(df) < 10:
-            return {"error": "Insufficient data", "confidence": 0.0, "timeframe": timeframe}
+        # Поиск POC (Point of Control)
+        poc_node = max(nodes, key=lambda x: x.volume)
         
-        result = self.analyze_legacy(df, current_price)
-        result.timeframe = timeframe
-        result.lineage = lineage
+        # Расчет области ценности (Value Area)
+        target_volume = total_volume * self.VALUE_AREA_PERCENT
+        sorted_by_volume = sorted(nodes, key=lambda x: x.volume, reverse=True)
         
-        return {
-            "poc": result.poc,
-            "value_area_high": result.value_area_high,
-            "value_area_low": result.value_area_low,
-            "value_area_width": result.value_area_width,
-            "current_price_vs_poc": result.current_price_vs_poc,
-            "volume_distribution": result.volume_distribution,
-            "support_levels": result.support_levels,
-            "resistance_levels": result.resistance_levels,
-            "confidence": result.confidence,
-            "timeframe": timeframe,
-            "lineage": lineage
-        }
-    
-    def _get_dominant_distribution(self, per_timeframe_results: Dict) -> str:
-        """Get the most common volume distribution across timeframes."""
-        distributions = [r['volume_distribution'] for r in per_timeframe_results.values()]
-        if not distributions:
-            return 'UNKNOWN'
+        va_nodes = []
+        accumulated_volume = 0.0
         
-        # Count occurrences
-        counts = {}
-        for d in distributions:
-            counts[d] = counts.get(d, 0) + 1
-        
-        return max(counts, key=counts.get)
-    
-    def analyze_legacy(self, df: pd.DataFrame, current_price: float) -> VolumeProfileResult:
-        """
-        Analyze volume profile from OHLCV data. (Legacy method for single-TF analysis)
-        
-        Args:
-            df: DataFrame with columns ['high', 'low', 'close', 'volume']
-            current_price: Current market price
-            
-        Returns:
-            VolumeProfileResult with POC, value area, and levels
-        """
-        if len(df) < 10:
-            return self._empty_result(current_price)
-        
-        # Get recent data
-        df_recent = df.tail(self.lookback_bars).copy()
-        
-        if len(df_recent) < 10:
-            return self._empty_result(current_price)
-        
-        # Calculate price range
-        price_min = df_recent['low'].min()
-        price_max = df_recent['high'].max()
-        
-        if price_max <= price_min:
-            return self._empty_result(current_price)
-        
-        # Create price bins for volume distribution
-        bin_edges = np.linspace(price_min, price_max, self.NUM_PRICE_BINS + 1)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        
-        # Distribute volume across bins
-        volume_by_bin = self._distribute_volume(df_recent, bin_edges)
-        
-        if volume_by_bin.sum() == 0:
-            return self._empty_result(current_price)
-        
-        # Find POC (Point of Control)
-        poc_idx = np.argmax(volume_by_bin)
-        poc = bin_centers[poc_idx]
-        
-        # Calculate Value Area (70% of volume around POC)
-        va_high, va_low = self._calculate_value_area(
-            bin_centers, volume_by_bin, poc, self.value_area_percent
-        )
-        
-        # Find high/low volume nodes
-        support_levels, resistance_levels = self._find_volume_nodes(
-            bin_centers, volume_by_bin, current_price
-        )
-        
-        # Determine volume distribution shape
-        distribution = self._classify_distribution(volume_by_bin, poc_idx)
-        
-        # Calculate distance from POC
-        poc_distance_pct = (current_price - poc) / poc * 100
-        
-        # Calculate confidence based on profile clarity
-        confidence = self._calculate_confidence(volume_by_bin, poc_idx)
-        
-        return VolumeProfileResult(
-            poc=round(poc, 8),
-            value_area_high=round(va_high, 8),
-            value_area_low=round(va_low, 8),
-            value_area_width=round(va_high - va_low, 8),
-            current_price_vs_poc=round(poc_distance_pct, 4),
-            volume_distribution=distribution,
-            support_levels=[round(l, 8) for l in support_levels[:3]],
-            resistance_levels=[round(r, 8) for r in resistance_levels[:3]],
-            confidence=round(confidence, 4)
-        )
-    
-    def _distribute_volume(self, df: pd.DataFrame, bin_edges: np.ndarray) -> np.ndarray:
-        """
-        Distribute trading volume across price bins.
-        
-        Uses bar's average price weighted by volume.
-        """
-        volume_dist = np.zeros(len(bin_edges) - 1)
-        
-        for _, row in df.iterrows():
-            # Use typical price (HLC average)
-            typical_price = (row['high'] + row['low'] + row['close']) / 3
-            volume = row['volume']
-            
-            # Find which bin this price falls into
-            bin_idx = np.searchsorted(bin_edges, typical_price) - 1
-            bin_idx = max(0, min(len(volume_dist) - 1, bin_idx))
-            
-            volume_dist[bin_idx] += volume
-        
-        return volume_dist
-    
-    def _calculate_value_area(
-        self,
-        bin_centers: np.ndarray,
-        volume_by_bin: np.ndarray,
-        poc: float,
-        target_percent: float
-    ) -> Tuple[float, float]:
-        """
-        Calculate Value Area containing target_percent of total volume.
-        
-        Starts from POC and expands outward until target is reached.
-        """
-        total_volume = volume_by_bin.sum()
-        target_volume = total_volume * target_percent
-        
-        # Find POC index
-        poc_idx = np.argmin(np.abs(bin_centers - poc))
-        
-        # Expand from POC
-        left_idx = poc_idx
-        right_idx = poc_idx
-        accumulated_volume = volume_by_bin[poc_idx]
-        
-        while accumulated_volume < target_volume:
-            # Check which side to expand
-            left_vol = volume_by_bin[left_idx - 1] if left_idx > 0 else 0
-            right_vol = volume_by_bin[right_idx + 1] if right_idx < len(volume_by_bin) - 1 else 0
-            
-            if left_vol >= right_vol and left_idx > 0:
-                left_idx -= 1
-                accumulated_volume += volume_by_bin[left_idx]
-            elif right_idx < len(volume_by_bin) - 1:
-                right_idx += 1
-                accumulated_volume += volume_by_bin[right_idx]
-            else:
+        for node in sorted_by_volume:
+            va_nodes.append(node)
+            accumulated_volume += node.volume
+            if accumulated_volume >= target_volume:
                 break
         
-        va_low = bin_centers[left_idx]
-        va_high = bin_centers[right_idx]
+        # Границы области ценности
+        va_prices = [node.price for node in va_nodes]
+        va_low = min(va_prices)
+        va_high = max(va_prices)
+        va_volume = accumulated_volume
         
-        return va_high, va_low
-    
-    def _find_volume_nodes(
-        self,
-        bin_centers: np.ndarray,
-        volume_by_bin: np.ndarray,
-        current_price: float
-    ) -> Tuple[List[float], List[float]]:
-        """
-        Find high volume nodes (support/resistance) and low volume nodes.
+        # Определение типа профиля
+        profile_type = self._classify_profile(nodes, poc_node, va_low, va_high)
         
-        High volume = strong support/resistance
-        Low volume = price moves through quickly
-        """
-        avg_volume = np.mean(volume_by_bin)
-        high_vol_threshold = avg_volume * 1.5
-        low_vol_threshold = avg_volume * 0.5
+        # Расчет уверенности
+        confidence = self._calculate_confidence(nodes, total_volume, poc_node.volume)
         
-        support_levels = []
-        resistance_levels = []
-        
-        for i, (price, vol) in enumerate(zip(bin_centers, volume_by_bin)):
-            if vol >= high_vol_threshold:
-                if price < current_price:
-                    support_levels.append(price)
-                elif price > current_price:
-                    resistance_levels.append(price)
-        
-        # Sort by proximity to current price
-        support_levels.sort(reverse=True)  # Closest first below
-        resistance_levels.sort()  # Closest first above
-        
-        return support_levels, resistance_levels
-    
-    def _classify_distribution(self, volume_by_bin: np.ndarray, poc_idx: int) -> str:
-        """
-        Classify volume distribution shape.
-        
-        BALANCED: Symmetric around POC
-        SKEWED_UP: More volume above POC (bullish)
-        SKEWED_DOWN: More volume below POC (bearish)
-        """
-        if poc_idx <= 5 or poc_idx >= len(volume_by_bin) - 5:
-            return 'EXTREME'  # POC at edge
-        
-        # Compare volume above and below POC
-        volume_below = volume_by_bin[:poc_idx].sum()
-        volume_above = volume_by_bin[poc_idx+1:].sum()
-        
-        if volume_below == 0 and volume_above == 0:
-            return 'BALANCED'
-        
-        ratio = volume_above / max(volume_below, 1)
-        
-        if ratio > 1.3:
-            return 'SKEWED_UP'
-        elif ratio < 0.7:
-            return 'SKEWED_DOWN'
-        else:
-            return 'BALANCED'
-    
-    def _calculate_confidence(self, volume_by_bin: np.ndarray, poc_idx: int) -> float:
-        """
-        Calculate confidence in the volume profile analysis.
-        
-        Higher confidence when:
-        - Clear POC (one dominant bin)
-        - Smooth distribution
-        - Sufficient volume
-        """
-        total_volume = volume_by_bin.sum()
-        poc_volume = volume_by_bin[poc_idx]
-        
-        # POC dominance (higher = clearer profile)
-        poc_dominance = poc_volume / max(total_volume / len(volume_by_bin), 1)
-        
-        # Normalize to 0-1
-        confidence = min(1.0, poc_dominance / 3.0)
-        
-        return confidence
-    
-    def _empty_result(self, current_price: float) -> VolumeProfileResult:
-        """Return empty result when insufficient data."""
-        return VolumeProfileResult(
-            poc=current_price,
-            value_area_high=current_price * 1.02,
-            value_area_low=current_price * 0.98,
-            value_area_width=current_price * 0.04,
-            current_price_vs_poc=0.0,
-            volume_distribution='UNKNOWN',
-            support_levels=[],
-            resistance_levels=[],
-            confidence=0.0
+        result = VolumeProfileResult(
+            poc_price=poc_node.price,
+            poc_volume=poc_node.volume,
+            value_area_high=va_high,
+            value_area_low=va_low,
+            value_area_volume=va_volume,
+            total_volume=total_volume,
+            nodes=nodes,
+            profile_type=profile_type,
+            confidence=confidence
         )
+        
+        logger.debug(f"VolumeProfile: POC={result.poc_price}, VA=[{result.value_area_low}-{result.value_area_high}], Type={result.profile_type}")
+        
+        return result
     
-    def get_signal(self, profile: VolumeProfileResult, position: str = None) -> Tuple[float, float]:
-        """
-        Generate trading signal from volume profile.
+    def _classify_profile(self, 
+                         nodes: List[VolumeNode], 
+                         poc: VolumeNode,
+                         va_low: float, 
+                         va_high: float) -> str:
+        """Классификация типа профиля"""
+        if not nodes:
+            return "unknown"
         
+        prices = [node.price for node in nodes]
+        min_price = min(prices)
+        max_price = max(prices)
+        price_range = max_price - min_price
+        
+        if price_range == 0:
+            return "flat"
+        
+        # Позиция POC относительно диапазона
+        poc_position = (poc.price - min_price) / price_range
+        
+        # Ширина области ценности
+        va_width = va_high - va_low
+        va_relative_width = va_width / price_range if price_range > 0 else 0
+        
+        if poc_position > 0.7:
+            return "bearish"  # POC в верхней части - медвежий профиль
+        elif poc_position < 0.3:
+            return "bullish"  # POC в нижней части - бычий профиль
+        elif va_relative_width < 0.4:
+            return "narrow"   # Узкая область ценности - консолидация
+        else:
+            return "balanced" # Сбалансированный профиль
+    
+    def _calculate_confidence(self, 
+                             nodes: List[VolumeNode], 
+                             total_volume: float, 
+                             poc_volume: float) -> float:
+        """Расчет уверенности в профиле"""
+        if not nodes or total_volume == 0:
+            return 0.0
+        
+        # Уверенность растет с количеством данных и концентрацией объема в POC
+        data_factor = min(1.0, len(nodes) / 20.0)  # Нормализация по количеству узлов
+        concentration_factor = poc_volume / total_volume if total_volume > 0 else 0
+        
+        confidence = (data_factor * 0.4 + concentration_factor * 0.6)
+        
+        return min(1.0, confidence)
+    
+    def get_support_resistance_levels(self, 
+                                     profile: VolumeProfileResult,
+                                     additional_profiles: Optional[List[VolumeProfileResult]] = None) -> List[Dict]:
+        """
+        Вычисление уровней поддержки и сопротивления на основе профиля.
+        
+        Args:
+            profile: Текущий профиль объема
+            additional_profiles: Дополнительные профили (старшие ТФ)
+            
         Returns:
-            score: -1.0 to +1.0 (bearish to bullish)
-            confidence: 0.0 to 1.0
+            Список уровней с типом и силой
         """
-        if profile.confidence < 0.3:
-            return 0.0, 0.0
+        levels = []
         
-        score = 0.0
+        if profile.poc_price > 0:
+            levels.append({
+                "price": profile.poc_price,
+                "type": "POC",
+                "strength": profile.confidence,
+                "description": "Point of Control - максимальный объем"
+            })
         
-        # Price relative to POC
-        if profile.current_price_vs_poc > 2:  # Price well above POC
-            # Might be overextended
-            score -= 0.3
-        elif profile.current_price_vs_poc < -2:  # Price well below POC
-            # Potential bounce
-            score += 0.3
+        if profile.value_area_high > 0:
+            levels.append({
+                "price": profile.value_area_high,
+                "type": "VAH",
+                "strength": profile.confidence * 0.8,
+                "description": "Value Area High - верхняя граница"
+            })
         
-        # Distribution skew
-        if profile.volume_distribution == 'SKEWED_UP':
-            score += 0.2
-        elif profile.volume_distribution == 'SKEWED_DOWN':
-            score -= 0.2
+        if profile.value_area_low > 0:
+            levels.append({
+                "price": profile.value_area_low,
+                "type": "VAL",
+                "strength": profile.confidence * 0.8,
+                "description": "Value Area Low - нижняя граница"
+            })
         
-        # Position relative to value area
-        # (would need current_price passed in)
+        # Объединение с дополнительными профилями
+        if additional_profiles:
+            for add_profile in additional_profiles:
+                if add_profile.poc_price > 0 and add_profile.poc_price != profile.poc_price:
+                    levels.append({
+                        "price": add_profile.poc_price,
+                        "type": "POC_HTF",
+                        "strength": add_profile.confidence * 0.9,  # Старшие ТФ имеют больший вес
+                        "description": "POC старшего таймфрейма"
+                    })
         
-        confidence = profile.confidence
+        # Сортировка по силе
+        levels.sort(key=lambda x: x["strength"], reverse=True)
         
-        return score, confidence
+        return levels
+    
+    def merge_profiles(self, profiles: List[VolumeProfileResult]) -> VolumeProfileResult:
+        """
+        Объединение нескольких профилей (для мульти-ТФ анализа).
+        
+        Args:
+            profiles: Список профилей для объединения
+            
+        Returns:
+            Объединенный профиль
+        """
+        if not profiles:
+            return VolumeProfileResult()
+        
+        if len(profiles) == 1:
+            return profiles[0]
+        
+        # Взвешенное объединение POC
+        total_weight = sum(p.confidence for p in profiles)
+        if total_weight == 0:
+            return profiles[0]
+        
+        weighted_poc = sum(p.poc_price * p.confidence for p in profiles) / total_weight
+        
+        # Объединение областей ценности
+        all_va_lows = [p.value_area_low for p in profiles if p.value_area_low > 0]
+        all_va_highs = [p.value_area_high for p in profiles if p.value_area_high > 0]
+        
+        merged_va_low = min(all_va_lows) if all_va_lows else 0
+        merged_va_high = max(all_va_highs) if all_va_highs else 0
+        
+        # Средняя уверенность
+        avg_confidence = sum(p.confidence for p in profiles) / len(profiles)
+        
+        # Общий объем
+        total_volume = sum(p.total_volume for p in profiles)
+        
+        merged = VolumeProfileResult(
+            poc_price=weighted_poc,
+            poc_volume=sum(p.poc_volume for p in profiles),
+            value_area_high=merged_va_high,
+            value_area_low=merged_va_low,
+            value_area_volume=sum(p.value_area_volume for p in profiles),
+            total_volume=total_volume,
+            profile_type=self._determine_merged_type(profiles),
+            confidence=avg_confidence
+        )
+        
+        logger.info(f"Объединено {len(profiles)} профилей. POC={merged.poc_price:.2f}")
+        
+        return merged
+    
+    def _determine_merged_type(self, profiles: List[VolumeProfileResult]) -> str:
+        """Определение типа объединенного профиля"""
+        if not profiles:
+            return "unknown"
+        
+        types = [p.profile_type for p in profiles]
+        bullish_count = types.count("bullish")
+        bearish_count = types.count("bearish")
+        
+        if bullish_count > bearish_count:
+            return "bullish"
+        elif bearish_count > bullish_count:
+            return "bearish"
+        else:
+            return "balanced"
