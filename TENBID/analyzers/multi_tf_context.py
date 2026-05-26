@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 
-from core.data_lineage import LineageTracker, DataSource, DataQuality, DataLineage
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
 
 logger = logging.getLogger(__name__)
 

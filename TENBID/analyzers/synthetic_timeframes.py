@@ -1,6 +1,6 @@
 """Synthetic Timeframes Builder - builds higher TF from 5m base"""
 import pandas as pd
-from core.data_lineage import LineageTracker, DataSource, DataQuality, DataLineage
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
 
 class SyntheticTimeframes:
     def __init__(self, config):
