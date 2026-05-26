@@ -3,36 +3,42 @@
 *.pyc
 __pycache__/
 
-# Dependencies
-.venv/
+# Virtual environments
 venv/
-node_modules/
-
-# Logs and temporary files
-*.log
-*.tmp
-*.swp
-
-# Environment files
+.venv/
 .env
 .env.local
 *.env.*
 
-# Editors
-.vscode/
-.idea/
+# Dependencies
+node_modules/
 
 # Build artifacts
 dist/
 build/
 target/
 
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+
+# Editors
+.vscode/
+.idea/
+
 # Coverage reports
+.coverage
 coverage/
 htmlcov/
-.coverage
 
-# Python cache
-.mypy_cache/
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Testing
 .pytest_cache/
+.mypy_cache/
 ```
