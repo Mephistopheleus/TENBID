@@ -1,11 +1,13 @@
-"""Confidence System - calculates trade confidence with adaptive weights and lineage tracking"""
+"""Confidence System - calculates trade confidence with adaptive weights and lineage tracking v2.0"""
 import logging
-from core.data_lineage import LineageTracker, DataSource, DataQuality, DataLineage
+from typing import Dict, List, Optional, Any
+from core.data_lineage import DataLineageManager
 
 logger = logging.getLogger(__name__)
 
 class ConfidenceSystem:
-    def __init__(self, config, initial_weights=None):
+    def __init__(self, config, lineage_manager: DataLineageManager, initial_weights=None):
+        self.lineage_manager = lineage_manager
         self.base_threshold = config.getfloat('CONFIDENCE', 'base_confidence_threshold')
         self.adaptive_enabled = config.getboolean('CONFIDENCE', 'adaptive_threshold_enabled')
         self.min_threshold = config.getfloat('CONFIDENCE', 'min_threshold')
@@ -29,26 +31,31 @@ class ConfidenceSystem:
                 'regime': 1.0
             }
     
-    def calculate(self, analysis, data_dict, btc_result=None, fractal_result=None, orderbook_result=None, pattern_result=None, regime_result=None, override_weights=None):
-        """Calculate total confidence score from analysis with lineage
+    def calculate(self, snapshot_id: str, analysis: Dict, data_dict: Dict, 
+                  btc_result: Optional[Dict] = None, fractal_result: Optional[Dict] = None, 
+                  orderbook_result: Optional[Dict] = None, pattern_result: Optional[Dict] = None, 
+                  regime_result: Optional[Dict] = None, override_weights: Optional[Dict] = None,
+                  context_profile_id: Optional[str] = None):
+        """Calculate total confidence score from analysis with full lineage tracking v2.0
         
         Args:
-            analysis: dict {timeframe: analysis_dict} с маркировкой в 'lineage'
-            data_dict: dict {timeframe: (df, lineage)} исходные данные
+            snapshot_id: ID корневого снимка рынка (от DataLineageManager)
+            analysis: dict {timeframe: analysis_dict} с данными индикаторов
+            data_dict: dict {timeframe: (df, metadata)} исходные данные
             btc_result: результат анализа BTC корреляции
             fractal_result: результат фрактального анализа
             orderbook_result: результат анализа стакана
             pattern_result: результат анализа паттернов
             regime_result: результат определения рыночного режима
-            override_weights: REQUIRED - weights from Autotuner (no hardcoded weights)
+            override_weights: REQUIRED - weights from Autotuner
+            context_profile_id: ID профиля контекста (опционально)
             
         Returns:
             dict: {
-                'total_confidence': float,
-                'component_scores': dict,
-                'weights_used': dict,
-                'score_lineage': DataLineage,
-                'component_lineages': dict
+                'confidence': float,
+                'matrix_node_id': str,
+                'breakdown': dict,
+                'recommendation': str
             }
         """
         # CRITICAL: Must receive weights from Autotuner - no hardcoded values
@@ -57,191 +64,279 @@ class ConfidenceSystem:
         
         weights = override_weights if override_weights else self.weights.copy()
         
-        scores = {}
-        component_lineages = {}
-        all_lineages = []
+        scores: Dict[str, float] = {}
+        analysis_ids: List[str] = []
+        breakdown: Dict[str, Any] = {}
         
-        # Trend score (multi-timeframe agreement)
+        # --- 1. Trend Score (multi-timeframe agreement) ---
         trend_scores = []
-        trend_lineages = []
+        trend_details = {}
         for tf, data in analysis.items():
             if 'trend' in data:
                 trend_scores.append(data['trend'])
-                if 'lineage' in data:
-                    trend_lineages.append(data['lineage'])
+                trend_details[tf] = data['trend']
         
         if trend_scores:
             avg_trend = sum(trend_scores) / len(trend_scores)
             scores['trend'] = (avg_trend + 1) / 2  # Normalize to 0-1
-            
-            # Создаем маркировку для тренд скоринга
-            if trend_lineages:
-                merged_trend_lineage = LineageTracker.merge_lineages(
-                    trend_lineages,
-                    method="multi_tf_trend_agreement"
-                )
-                component_lineages['trend'] = merged_trend_lineage
-                all_lineages.append(merged_trend_lineage)
+            trend_direction = 'BULLISH' if avg_trend > 0.2 else ('BEARISH' if avg_trend < -0.2 else 'NEUTRAL')
         else:
             scores['trend'] = 0.5
+            trend_direction = 'NEUTRAL'
         
-        # Support/Resistance score
+        # Создаем узел анализа для тренда
+        try:
+            trend_node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name="confidence_component_trend",
+                result_vector={'scores': trend_details, 'average': avg_trend if trend_scores else None, 'direction': trend_direction},
+                confidence=scores['trend'],
+                additional_metadata={'component': 'trend', 'normalization': '(avg+1)/2'}
+            )
+            analysis_ids.append(trend_node_id)
+        except Exception as e:
+            logger.error(f"Failed to create trend analysis node: {e}")
+        
+        # --- 2. Support/Resistance Score ---
         sr_scores = []
-        sr_lineages = []
+        sr_details = {}
         for tf, data in analysis.items():
             if 'sr_strength' in data:
-                sr_scores.append(data.get('sr_strength', 0.5))
-                if 'lineage' in data:
-                    sr_lineages.append(data['lineage'])
+                val = data.get('sr_strength', 0.5)
+                sr_scores.append(val)
+                sr_details[tf] = val
         
         if sr_scores:
             scores['support_resistance'] = max(sr_scores)
-            if sr_lineages:
-                merged_sr_lineage = LineageTracker.merge_lineages(
-                    sr_lineages,
-                    method="max_sr_strength"
-                )
-                component_lineages['support_resistance'] = merged_sr_lineage
-                all_lineages.append(merged_sr_lineage)
         else:
             scores['support_resistance'] = 0.5
         
-        # Volume score
+        try:
+            sr_node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name="confidence_component_sr",
+                result_vector={'scores': sr_details, 'max_score': scores['support_resistance']},
+                confidence=scores['support_resistance'],
+                additional_metadata={'component': 'support_resistance', 'method': 'max_strength'}
+            )
+            analysis_ids.append(sr_node_id)
+        except Exception as e:
+            logger.error(f"Failed to create SR analysis node: {e}")
+        
+        # --- 3. Volume Score ---
         vol_scores = []
-        vol_lineages = []
+        vol_details = {}
         for tf, data in analysis.items():
             if 'volume_score' in data:
-                vol_scores.append(data.get('volume_score', 0.5))
-                if 'lineage' in data:
-                    vol_lineages.append(data['lineage'])
+                val = data.get('volume_score', 0.5)
+                vol_scores.append(val)
+                vol_details[tf] = val
         
         if vol_scores:
             scores['volume'] = sum(vol_scores) / len(vol_scores)
-            if vol_lineages:
-                merged_vol_lineage = LineageTracker.merge_lineages(
-                    vol_lineages,
-                    method="average_volume_score"
-                )
-                component_lineages['volume'] = merged_vol_lineage
-                all_lineages.append(merged_vol_lineage)
         else:
             scores['volume'] = 0.5
         
-        # Pattern score - из реального анализа паттернов
+        try:
+            vol_node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name="confidence_component_volume",
+                result_vector={'scores': vol_details, 'average': scores['volume']},
+                confidence=scores['volume'],
+                additional_metadata={'component': 'volume', 'method': 'average'}
+            )
+            analysis_ids.append(vol_node_id)
+        except Exception as e:
+            logger.error(f"Failed to create volume analysis node: {e}")
+        
+        # --- 4. Pattern Score ---
         if pattern_result and 'confidence' in pattern_result:
             scores['pattern'] = pattern_result.get('confidence', 0.7)
-            if 'lineage' in pattern_result and pattern_result['lineage']:
-                component_lineages['pattern'] = pattern_result['lineage']
-                all_lineages.append(pattern_result['lineage'])
+            pattern_data = pattern_result.get('data', {})
         else:
             scores['pattern'] = 0.7
-            pattern_lineage = LineageTracker.create_from_source(
-                source=DataSource.CALCULATED,
-                quality=DataQuality.LOW,
-                metadata={'note': 'default_pattern_score'}
-            )
-            component_lineages['pattern'] = pattern_lineage
-            all_lineages.append(pattern_lineage)
+            pattern_data = {'note': 'default_pattern_score'}
         
-        # Orderbook score - из реального анализа стакана
+        try:
+            pattern_node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name="confidence_component_pattern",
+                result_vector={'data': pattern_data, 'confidence': scores['pattern']},
+                confidence=scores['pattern'],
+                additional_metadata={'component': 'pattern', 'source': 'pattern_recognition'}
+            )
+            analysis_ids.append(pattern_node_id)
+        except Exception as e:
+            logger.error(f"Failed to create pattern analysis node: {e}")
+        
+        # --- 5. Orderbook Score ---
         if orderbook_result and 'confidence' in orderbook_result:
             scores['orderbook'] = orderbook_result.get('confidence', 0.6)
-            if 'lineage' in orderbook_result and orderbook_result['lineage']:
-                component_lineages['orderbook'] = orderbook_result['lineage']
-                all_lineages.append(orderbook_result['lineage'])
+            orderbook_data = orderbook_result.get('data', {})
         else:
             scores['orderbook'] = 0.6
-            orderbook_lineage = LineageTracker.create_from_source(
-                source=DataSource.CALCULATED,
-                quality=DataQuality.LOW,
-                metadata={'note': 'default_orderbook_score'}
-            )
-            component_lineages['orderbook'] = orderbook_lineage
-            all_lineages.append(orderbook_lineage)
+            orderbook_data = {'note': 'default_orderbook_score'}
         
-        # Correlation score - из реального анализа BTC
+        try:
+            ob_node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name="confidence_component_orderbook",
+                result_vector={'data': orderbook_data, 'confidence': scores['orderbook']},
+                confidence=scores['orderbook'],
+                additional_metadata={'component': 'orderbook', 'source': 'orderbook_analysis'}
+            )
+            analysis_ids.append(ob_node_id)
+        except Exception as e:
+            logger.error(f"Failed to create orderbook analysis node: {e}")
+        
+        # --- 6. Correlation Score (BTC) ---
         if btc_result and 'confidence' in btc_result:
             scores['correlation'] = btc_result.get('confidence', 0.5)
-            if 'lineage' in btc_result and btc_result['lineage']:
-                component_lineages['correlation'] = btc_result['lineage']
-                all_lineages.append(btc_result['lineage'])
+            corr_data = btc_result.get('data', {})
         else:
             scores['correlation'] = 0.5
-            correlation_lineage = LineageTracker.create_from_source(
-                source=DataSource.CALCULATED,
-                quality=DataQuality.LOW,
-                metadata={'note': 'default_correlation_score'}
-            )
-            component_lineages['correlation'] = correlation_lineage
-            all_lineages.append(correlation_lineage)
+            corr_data = {'note': 'default_correlation_score'}
         
-        # Fractal score - из фрактального анализа (добавляем как новый компонент)
+        try:
+            corr_node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name="confidence_component_correlation",
+                result_vector={'data': corr_data, 'confidence': scores['correlation']},
+                confidence=scores['correlation'],
+                additional_metadata={'component': 'correlation', 'source': 'btc_correlation'}
+            )
+            analysis_ids.append(corr_node_id)
+        except Exception as e:
+            logger.error(f"Failed to create correlation analysis node: {e}")
+        
+        # --- 7. Fractal Score ---
         if fractal_result and 'confidence' in fractal_result:
             scores['fractal'] = fractal_result.get('confidence', 0.5)
-            if 'lineage' in fractal_result and fractal_result['lineage']:
-                component_lineages['fractal'] = fractal_result['lineage']
-                all_lineages.append(fractal_result['lineage'])
+            fractal_data = fractal_result.get('data', {})
         else:
             scores['fractal'] = 0.5
-            fractal_lineage = LineageTracker.create_from_source(
-                source=DataSource.CALCULATED,
-                quality=DataQuality.LOW,
-                metadata={'note': 'default_fractal_score'}
-            )
-            component_lineages['fractal'] = fractal_lineage
-            all_lineages.append(fractal_lineage)
+            fractal_data = {'note': 'default_fractal_score'}
         
-        # Regime score - из определения рыночного режима (критически важный фильтр)
+        try:
+            fractal_node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name="confidence_component_fractal",
+                result_vector={'data': fractal_data, 'confidence': scores['fractal']},
+                confidence=scores['fractal'],
+                additional_metadata={'component': 'fractal', 'source': 'fractal_analysis'}
+            )
+            analysis_ids.append(fractal_node_id)
+        except Exception as e:
+            logger.error(f"Failed to create fractal analysis node: {e}")
+        
+        # --- 8. Regime Score ---
+        regime = 'UNKNOWN'
         if regime_result and 'confidence' in regime_result:
             regime = regime_result.get('regime', 'UNKNOWN')
             base_confidence = regime_result.get('confidence', 0.5)
+            regime_data = regime_result.get('data', {})
             
-            # Адаптируем вес в зависимости от режима через weights (веса теперь приходят от autotuner)
-            # В режиме HIGH_VOLATILITY снижаем доверие ко всем сигналам
+            # Адаптируем оценку в зависимости от режима
             if regime == 'HIGH_VOLATILITY':
                 scores['regime'] = base_confidence * 0.7  # Штраф за хаос
             elif regime == 'RANGING':
-                # Во флэте трендовые стратегии работают хуже
-                scores['regime'] = base_confidence * 0.85
+                scores['regime'] = base_confidence * 0.85  # Штраф за флэт
             elif regime in ['TREND_UP', 'TREND_DOWN']:
-                # В тренде повышаем доверие
-                scores['regime'] = base_confidence
+                scores['regime'] = base_confidence  # Без штрафа
             else:
                 scores['regime'] = 0.5
-            
-            if 'lineage' in regime_result and regime_result['lineage']:
-                component_lineages['regime'] = regime_result['lineage']
-                all_lineages.append(regime_result['lineage'])
         else:
             scores['regime'] = 0.5
-            regime_lineage = LineageTracker.create_from_source(
-                source=DataSource.CALCULATED,
-                quality=DataQuality.LOW,
-                metadata={'note': 'default_regime_score'}
-            )
-            component_lineages['regime'] = regime_lineage
-            all_lineages.append(regime_lineage)
+            regime_data = {'note': 'default_regime_score'}
         
-        # Calculate weighted average
+        try:
+            regime_node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name="confidence_component_regime",
+                result_vector={'regime': regime, 'data': regime_data, 'base_confidence': regime_result.get('confidence', 0.5) if regime_result else 0.5, 'adjusted_confidence': scores['regime']},
+                confidence=scores['regime'],
+                additional_metadata={'component': 'regime', 'source': 'market_regime'}
+            )
+            analysis_ids.append(regime_node_id)
+        except Exception as e:
+            logger.error(f"Failed to create regime analysis node: {e}")
+        
+        # --- Calculate Weighted Average ---
         total_weight = sum(weights.values())
+        if total_weight == 0:
+            logger.warning("Total weight is zero, using equal weights")
+            total_weight = len(scores)
+            for k in scores:
+                weights[k] = 1.0
+        
         weighted_sum = sum(scores[k] * weights.get(k, 1.0) for k in scores)
         total_confidence = weighted_sum / total_weight
         
-        # Создаем итоговую маркировку для общего confidence
-        if all_lineages:
-            score_lineage = LineageTracker.merge_lineages(
-                all_lineages,
-                method="weighted_confidence_calculation"
-            )
-        else:
-            score_lineage = None
+        # --- Determine Recommendation ---
+        # Логика: если уверенность выше порога и тренд положительный -> BUY, отрицательный -> SELL
+        current_threshold = self.get_adaptive_threshold(analysis)
         
-        return {
-            'total_confidence': total_confidence,
+        if total_confidence >= current_threshold:
+            if trend_direction == 'BULLISH':
+                recommendation = 'BUY'
+            elif trend_direction == 'BEARISH':
+                recommendation = 'SELL'
+            else:
+                # Если тренд нейтральный, но уверенность высокая - можно воздержаться или следовать мелким сигналам
+                # Для безопасности лучше HOLD, если нет явного направления
+                recommendation = 'HOLD'
+        else:
+            recommendation = 'HOLD'
+        
+        # Формируем breakdown для вероятностного поля
+        breakdown = {
             'component_scores': scores,
             'weights_used': weights.copy(),
-            'score_lineage': score_lineage,
-            'component_lineages': component_lineages
+            'total_weight': total_weight,
+            'weighted_sum': weighted_sum,
+            'threshold_used': current_threshold,
+            'trend_direction': trend_direction,
+            'regime': regime
+        }
+        
+        final_vector = {
+            'confidence': total_confidence,
+            'action': recommendation,
+            'regime': regime,
+            'trend': trend_direction
+        }
+        
+        # --- Create Matrix Decision Node ---
+        matrix_node_id = ""
+        if analysis_ids:
+            try:
+                matrix_node_id = self.lineage_manager.create_matrix_decision_node(
+                    input_analysis_ids=analysis_ids,
+                    probability_field=breakdown,
+                    final_vector=final_vector,
+                    context_profile_id=context_profile_id
+                )
+            except Exception as e:
+                logger.error(f"Failed to create matrix decision node: {e}")
+                # Fallback: создаем узел без родителей, если что-то пошло не так (не должно случаться)
+                try:
+                    # Пытаемся создать хотя бы узел решения, помечая ошибку
+                    matrix_node_id = self.lineage_manager.create_matrix_decision_node(
+                        input_analysis_ids=[], # Пусто, будет ошибка внутри, но попробуем обработать
+                        probability_field={'error': str(e), 'fallback': True},
+                        final_vector=final_vector,
+                        context_profile_id=context_profile_id
+                    )
+                except:
+                    pass # Если совсем не вышло, оставляем пустым
+        else:
+            logger.warning("No analysis nodes created, skipping matrix decision node creation")
+        
+        return {
+            'confidence': total_confidence,
+            'matrix_node_id': matrix_node_id,
+            'breakdown': breakdown,
+            'recommendation': recommendation
         }
     
     def get_adaptive_threshold(self, analysis):
