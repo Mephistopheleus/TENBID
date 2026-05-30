@@ -27,3 +27,6 @@ class SafetyKernel:
         if mode != self.policy.allowed_mode and mode != "LIVE":
             raise PermissionError(f"Mode not allowed: {mode}")
 
+    def assert_symbol_allowed(self, symbol: str) -> None:
+        if symbol != self.policy.allowed_symbol:
+            raise PermissionError(f"Symbol not allowed: {symbol}")
