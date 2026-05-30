@@ -31,6 +31,7 @@ from trading.smart_trailing import SmartTrailing
 from shadow.shadow_calculator import ShadowCalculator
 from shadow.shadow_lab import ShadowLab
 from core.autotuner import Autotuner, init_autotuner_db, TradeContextSnapshot
+from core.probability_matrix import ProbabilityMatrix, ForecastInput, MarketScenario
 from reports.reporter import Reporter
 
 
@@ -76,6 +77,152 @@ class PositionManager:
         return len(self.active_positions)
 
 
+def collect_forecasts_from_analyzers(analysis, fractal_result, pattern_result, 
+                                     btc_result, orderbook_result, regime_result):
+    """
+    Собирает все прогнозы от анализаторов.
+    
+    Returns:
+        List[Dict]: Список прогнозов в формате для матрицы
+    """
+    all_forecasts = []
+    
+    # 1. Прогнозы от market_analyzer
+    if analysis and isinstance(analysis, dict):
+        for tf, tf_data in analysis.items():
+            if isinstance(tf_data, dict) and 'forecasts' in tf_data:
+                for forecast in tf_data['forecasts']:
+                    all_forecasts.append({
+                        'analyzer': 'market_analyzer',
+                        'timeframe': forecast.get('timeframe', tf),
+                        'forecast': forecast
+                    })
+    
+    # 2. Прогнозы от fractal_analyzer
+    if fractal_result and isinstance(fractal_result, dict):
+        if 'per_timeframe' in fractal_result:
+            for tf, tf_data in fractal_result['per_timeframe'].items():
+                if 'forecasts' in tf_data:
+                    for forecast in tf_data['forecasts']:
+                        all_forecasts.append({
+                            'analyzer': 'fractal_analyzer',
+                            'timeframe': forecast.get('timeframe', tf),
+                            'forecast': forecast
+                        })
+        elif 'forecasts' in fractal_result:
+            for forecast in fractal_result['forecasts']:
+                all_forecasts.append({
+                    'analyzer': 'fractal_analyzer',
+                    'timeframe': forecast.get('timeframe', '5m'),
+                    'forecast': forecast
+                })
+    
+    # 3. Прогнозы от pattern_analyzer
+    if pattern_result and isinstance(pattern_result, dict):
+        if 'per_timeframe' in pattern_result:
+            for tf, tf_data in pattern_result['per_timeframe'].items():
+                if 'forecasts' in tf_data:
+                    for forecast in tf_data['forecasts']:
+                        all_forecasts.append({
+                            'analyzer': 'pattern_analyzer',
+                            'timeframe': forecast.get('timeframe', tf),
+                            'forecast': forecast
+                        })
+        elif 'forecasts' in pattern_result:
+            for forecast in pattern_result['forecasts']:
+                all_forecasts.append({
+                    'analyzer': 'pattern_analyzer',
+                    'timeframe': forecast.get('timeframe', '5m'),
+                    'forecast': forecast
+                })
+    
+    return all_forecasts
+
+
+def apply_granular_trust(forecasts, autotuner, regime_type='UNKNOWN'):
+    """
+    Применяет гранулярное доверие к прогнозам.
+    
+    Пока используем упрощённую версию - в будущем autotuner будет
+    возвращать доверие для каждого (анализатор + ТФ + метрика + режим).
+    
+    Args:
+        forecasts: Список прогнозов
+        autotuner: Экземпляр Autotuner
+        regime_type: Текущий режим рынка
+    
+    Returns:
+        List[ForecastInput]: Прогнозы с весами доверия
+    """
+    weighted_forecasts = []
+    
+    # Получаем базовые веса от автотюнера
+    base_weights = autotuner.get_recommendation({})
+    
+    for item in forecasts:
+        analyzer_name = item['analyzer']
+        forecast = item['forecast']
+        
+        # Определяем базовый вес доверия для анализатора
+        # В будущем это будет гранулярное доверие (анализатор + ТФ + метрика + режим)
+        if analyzer_name == 'market_analyzer':
+            trust_weight = base_weights.get('market_analyzer', 1.0)
+        elif analyzer_name == 'fractal_analyzer':
+            trust_weight = base_weights.get('fractal', 1.0)
+        elif analyzer_name == 'pattern_analyzer':
+            trust_weight = base_weights.get('pattern', 1.0)
+        else:
+            trust_weight = 1.0
+        
+        # Создаём ForecastInput
+        try:
+            forecast_input = ForecastInput(
+                timeframe=forecast.get('timeframe', '5m'),
+                horizon_minutes=forecast.get('horizon_minutes', 15),
+                scenario=forecast.get('scenario', 'flat'),
+                price_target=forecast.get('price_target', 0.0),
+                price_range=forecast.get('price_range', {'min': 0.0, 'max': 0.0}),
+                confidence=forecast.get('confidence', 0.5),
+                strength=forecast.get('strength', 0.5),
+                factors=forecast.get('factors', []),
+                analyzer_name=analyzer_name,
+                trust_weight=trust_weight
+            )
+            weighted_forecasts.append(forecast_input)
+        except Exception as e:
+            logging.getLogger('TENBID').warning(f"Failed to create ForecastInput: {e}")
+            continue
+    
+    return weighted_forecasts
+
+
+def update_probability_matrix(matrix, forecasts, current_price, volatility):
+    """
+    Обновляет матрицу вероятностей прогнозами.
+    
+    Args:
+        matrix: Экземпляр ProbabilityMatrix
+        forecasts: Список ForecastInput
+        current_price: Текущая цена
+        volatility: Волатильность (ATR)
+    """
+    logger = logging.getLogger('TENBID')
+    
+    # Инициализируем сетку матрицы
+    matrix.initialize(current_price, volatility)
+    
+    # Добавляем все прогнозы
+    for forecast in forecasts:
+        matrix.add_forecast(forecast)
+    
+    # Применяем Gaussian blur
+    if matrix.forecasts_added > 0:
+        matrix.apply_blur()
+        logger.debug(f"Matrix updated: {matrix.forecasts_added} forecasts added, blur applied")
+    else:
+        logger.warning("No forecasts added to matrix")
+
+
 async def main():
     # Setup
     config = ConfigLoader('config.ini')
@@ -106,6 +253,19 @@ async def main():
     trailing = SmartTrailing(config)
     shadow = ShadowCalculator(config, db, binance_connector=binance)
     autotuner = Autotuner()  # Initialize Autotuner
+    
+    # Initialize Probability Matrix with autotuner parameters
+    matrix_params = {
+        'matrix_time_horizon': 60,  # 60 минут горизонт
+        'matrix_time_resolution': 5,  # 5 минут шаг
+        'matrix_price_resolution': 0.5,  # 0.5% шаг цены
+        'matrix_blur_radius': 1.0,  # Радиус размытия
+        'matrix_min_probability': 0.1,  # Минимальный порог
+        'matrix_max_zones': 10  # Максимум зон
+    }
+    probability_matrix = ProbabilityMatrix(autotuner_params=matrix_params)
+    logger.info("📊 Probability Matrix initialized with autotuner parameters")
+    
     shadow_lab = ShadowLab(db.db_path)  # Initialize Shadow Lab
     reporter = Reporter(db, config)
     position_manager = PositionManager()  # Менеджер позиций
@@ -177,6 +337,40 @@ async def main():
             orderbook_result = orderbook_analyzer.analyze(symbol, context)
             pattern_result = pattern_analyzer.analyze(context)
             regime_result = market_regime_analyzer.analyze(context)
+            
+            # === ИНТЕГРАЦИЯ МАТРИЦЫ ПРОГНОЗОВ ===
+            # 1. Собираем все прогнозы от анализаторов
+            all_forecasts = collect_forecasts_from_analyzers(
+                analysis, fractal_result, pattern_result,
+                btc_result, orderbook_result, regime_result
+            )
+            
+            # 2. Применяем гранулярное доверие от автотюнера
+            regime_type = regime_result.get('regime', 'UNKNOWN') if regime_result else 'UNKNOWN'
+            weighted_forecasts = apply_granular_trust(all_forecasts, autotuner, regime_type)
+            
+            # 3. Обновляем матрицу вероятностей
+            current_price = all_data['5m'][0].iloc[-1]['close'] if len(all_data['5m'][0]) > 0 else 0
+            atr = analysis.get('5m', {}).get('atr', current_price * 0.01) if analysis else current_price * 0.01
+            
+            update_probability_matrix(probability_matrix, weighted_forecasts, current_price, atr)
+            
+            # 4. Получаем зоны максимальной вероятности
+            probability_zones = probability_matrix.find_max_probability_zones()
+            
+            # Логируем статистику матрицы
+            matrix_stats = probability_matrix.get_statistics()
+            logger.debug(f"Matrix stats: {matrix_stats['forecasts_added']} forecasts, "
+                        f"max_prob={matrix_stats['max_probability']:.3f}, "
+                        f"zones_found={len(probability_zones)}")
+            
+            if probability_zones:
+                top_zone = probability_zones[0]
+                logger.info(f"🎯 Top probability zone: {top_zone.scenario.value} @ "
+                           f"{top_zone.time_minutes}min, price={top_zone.price_center:.6f}, "
+                           f"prob={top_zone.probability:.3f}")
+            
+            # === КОНЕЦ ИНТЕГРАЦИИ МАТРИЦЫ ===
             
             # Get optimized weights from Autotuner FIRST (before calculating confidence)
             optimized_weights = autotuner.get_recommendation({})

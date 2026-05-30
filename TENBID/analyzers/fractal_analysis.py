@@ -197,6 +197,12 @@ class FractalAnalyzer:
             }
         )
         
+        # === ГЕНЕРАЦИЯ ПРОГНОЗОВ ===
+        forecasts = self._generate_fractal_forecasts(
+            df, tf, fractals, clusters, nearest_support, nearest_resistance,
+            current_signal, confidence, result_lineage
+        )
+        
         return {
             "fractals_count": len(fractals),
             "last_up_fractal": {"time": str(last_up), "price": float(fractals.loc[last_up, 'high'])} if last_up else None,
@@ -208,7 +214,8 @@ class FractalAnalyzer:
             "nearest_support": nearest_support,
             "nearest_resistance": nearest_resistance,
             "timeframe": tf,
-            "lineage": result_lineage
+            "lineage": result_lineage,
+            "forecasts": forecasts  # НОВОЕ: прогнозы
         }
 
     def _calculate_williams_fractals(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -338,3 +345,243 @@ class FractalAnalyzer:
             score += 0.3
             
         return min(1.0, score)
+    
+    def _generate_fractal_forecasts(self, df, timeframe, fractals, clusters,
+                                   support_level, resistance_level, signal,
+                                   confidence, lineage):
+        """
+        Генерирует прогнозы на основе фрактальных уровней.
+        
+        Фракталы показывают ключевые уровни разворота.
+        Прогнозы строятся на основе:
+        - Ближайших уровней S/R
+        - Кластеров фракталов (сильные уровни)
+        - Текущего сигнала (разворот вверх/вниз)
+        
+        Returns:
+            list: Список прогнозов
+        """
+        forecasts = []
+        
+        if df.empty or len(df) < 10:
+            return forecasts
+        
+        current_price = df['close'].iloc[-1]
+        
+        # Определяем временные параметры
+        tf_minutes = self._get_tf_minutes(timeframe)
+        
+        # Горизонты прогнозов (в свечах)
+        horizons = [3, 5, 10, 20]
+        
+        for horizon_candles in horizons:
+            horizon_minutes = horizon_candles * tf_minutes
+            
+            # === ПРОГНОЗ НА ОСНОВЕ БЛИЖАЙШЕГО СОПРОТИВЛЕНИЯ ===
+            if resistance_level > 0 and resistance_level > current_price:
+                distance_to_resistance = (resistance_level - current_price) / current_price
+                
+                # Если сопротивление близко (< 2%)
+                if distance_to_resistance < 0.02:
+                    # Прогноз достижения сопротивления
+                    reach_probability = confidence * 0.8
+                    
+                    # Проверяем наличие кластера на этом уровне
+                    cluster_at_resistance = any(
+                        abs(c['price_level'] - resistance_level) / resistance_level < 0.005
+                        for c in clusters if c['type'] == 'RESISTANCE'
+                    )
+                    
+                    if cluster_at_resistance:
+                        reach_probability *= 0.7  # Сильное сопротивление - сложнее пробить
+                    
+                    forecast_lineage = LineageTracker.create_calculated(
+                        method=f"fractal_resistance_forecast_{horizon_candles}c",
+                        dependencies=[lineage],
+                        quality=DataQuality.MEDIUM,
+                        metadata={
+                            'resistance_level': resistance_level,
+                            'has_cluster': cluster_at_resistance
+                        }
+                    )
+                    
+                    forecasts.append({
+                        "timeframe": timeframe,
+                        "horizon_candles": horizon_candles,
+                        "horizon_minutes": horizon_minutes,
+                        "scenario": "APPROACH_RESISTANCE",
+                        "price_target": round(resistance_level, 6),
+                        "price_range": {
+                            "min": round(current_price, 6),
+                            "max": round(resistance_level * 1.005, 6)
+                        },
+                        "confidence": round(reach_probability, 4),
+                        "strength": round(confidence, 4),
+                        "factors": ["fractal_resistance", "cluster_resistance"] if cluster_at_resistance else ["fractal_resistance"],
+                        "lineage": forecast_lineage
+                    })
+                    
+                    # Прогноз отскока от сопротивления
+                    if cluster_at_resistance:
+                        bounce_target = current_price - (resistance_level - current_price) * 0.5
+                        bounce_probability = confidence * 0.6
+                        
+                        forecast_lineage = LineageTracker.create_calculated(
+                            method=f"fractal_resistance_bounce_{horizon_candles}c",
+                            dependencies=[lineage],
+                            quality=DataQuality.MEDIUM,
+                            metadata={'resistance_level': resistance_level}
+                        )
+                        
+                        forecasts.append({
+                            "timeframe": timeframe,
+                            "horizon_candles": horizon_candles + 2,
+                            "horizon_minutes": (horizon_candles + 2) * tf_minutes,
+                            "scenario": "RESISTANCE_REJECTION",
+                            "price_target": round(bounce_target, 6),
+                            "price_range": {
+                                "min": round(bounce_target * 0.995, 6),
+                                "max": round(resistance_level, 6)
+                            },
+                            "confidence": round(bounce_probability, 4),
+                            "strength": round(confidence * 0.8, 4),
+                            "factors": ["strong_resistance", "cluster_rejection"],
+                            "lineage": forecast_lineage
+                        })
+            
+            # === ПРОГНОЗ НА ОСНОВЕ БЛИЖАЙШЕЙ ПОДДЕРЖКИ ===
+            if support_level > 0 and support_level < current_price:
+                distance_to_support = (current_price - support_level) / current_price
+                
+                # Если поддержка близко (< 2%)
+                if distance_to_support < 0.02:
+                    # Прогноз достижения поддержки
+                    reach_probability = confidence * 0.8
+                    
+                    # Проверяем наличие кластера
+                    cluster_at_support = any(
+                        abs(c['price_level'] - support_level) / support_level < 0.005
+                        for c in clusters if c['type'] == 'SUPPORT'
+                    )
+                    
+                    if cluster_at_support:
+                        reach_probability *= 0.7
+                    
+                    forecast_lineage = LineageTracker.create_calculated(
+                        method=f"fractal_support_forecast_{horizon_candles}c",
+                        dependencies=[lineage],
+                        quality=DataQuality.MEDIUM,
+                        metadata={
+                            'support_level': support_level,
+                            'has_cluster': cluster_at_support
+                        }
+                    )
+                    
+                    forecasts.append({
+                        "timeframe": timeframe,
+                        "horizon_candles": horizon_candles,
+                        "horizon_minutes": horizon_minutes,
+                        "scenario": "APPROACH_SUPPORT",
+                        "price_target": round(support_level, 6),
+                        "price_range": {
+                            "min": round(support_level * 0.995, 6),
+                            "max": round(current_price, 6)
+                        },
+                        "confidence": round(reach_probability, 4),
+                        "strength": round(confidence, 4),
+                        "factors": ["fractal_support", "cluster_support"] if cluster_at_support else ["fractal_support"],
+                        "lineage": forecast_lineage
+                    })
+                    
+                    # Прогноз отскока от поддержки
+                    if cluster_at_support:
+                        bounce_target = current_price + (current_price - support_level) * 0.5
+                        bounce_probability = confidence * 0.7
+                        
+                        forecast_lineage = LineageTracker.create_calculated(
+                            method=f"fractal_support_bounce_{horizon_candles}c",
+                            dependencies=[lineage],
+                            quality=DataQuality.MEDIUM,
+                            metadata={'support_level': support_level}
+                        )
+                        
+                        forecasts.append({
+                            "timeframe": timeframe,
+                            "horizon_candles": horizon_candles + 2,
+                            "horizon_minutes": (horizon_candles + 2) * tf_minutes,
+                            "scenario": "SUPPORT_BOUNCE",
+                            "price_target": round(bounce_target, 6),
+                            "price_range": {
+                                "min": round(support_level, 6),
+                                "max": round(bounce_target * 1.005, 6)
+                            },
+                            "confidence": round(bounce_probability, 4),
+                            "strength": round(confidence * 0.9, 4),
+                            "factors": ["strong_support", "cluster_hold"],
+                            "lineage": forecast_lineage
+                        })
+            
+            # === ПРОГНОЗ НА ОСНОВЕ СИГНАЛА РАЗВОРОТА ===
+            if signal == "BULLISH_REVERSAL_PENDING":
+                # Ожидается разворот вверх
+                reversal_target = current_price * 1.015  # +1.5%
+                
+                forecast_lineage = LineageTracker.create_calculated(
+                    method=f"fractal_bullish_reversal_{horizon_candles}c",
+                    dependencies=[lineage],
+                    quality=DataQuality.MEDIUM,
+                    metadata={'signal': signal}
+                )
+                
+                forecasts.append({
+                    "timeframe": timeframe,
+                    "horizon_candles": horizon_candles,
+                    "horizon_minutes": horizon_minutes,
+                    "scenario": "BULLISH_REVERSAL",
+                    "price_target": round(reversal_target, 6),
+                    "price_range": {
+                        "min": round(current_price, 6),
+                        "max": round(reversal_target * 1.01, 6)
+                    },
+                    "confidence": round(confidence * 0.75, 4),
+                    "strength": round(confidence, 4),
+                    "factors": ["fractal_reversal", "down_fractal_formed"],
+                    "lineage": forecast_lineage
+                })
+            
+            elif signal == "BEARISH_REVERSAL_PENDING":
+                # Ожидается разворот вниз
+                reversal_target = current_price * 0.985  # -1.5%
+                
+                forecast_lineage = LineageTracker.create_calculated(
+                    method=f"fractal_bearish_reversal_{horizon_candles}c",
+                    dependencies=[lineage],
+                    quality=DataQuality.MEDIUM,
+                    metadata={'signal': signal}
+                )
+                
+                forecasts.append({
+                    "timeframe": timeframe,
+                    "horizon_candles": horizon_candles,
+                    "horizon_minutes": horizon_minutes,
+                    "scenario": "BEARISH_REVERSAL",
+                    "price_target": round(reversal_target, 6),
+                    "price_range": {
+                        "min": round(reversal_target * 0.99, 6),
+                        "max": round(current_price, 6)
+                    },
+                    "confidence": round(confidence * 0.75, 4),
+                    "strength": round(confidence, 4),
+                    "factors": ["fractal_reversal", "up_fractal_formed"],
+                    "lineage": forecast_lineage
+                })
+        
+        return forecasts
+    
+    def _get_tf_minutes(self, timeframe):
+        """Конвертирует таймфрейм в минуты"""
+        tf_map = {
+            '1m': 1, '3m': 3, '5m': 5, '10m': 10, '15m': 15, '30m': 30,
+            '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440
+        }
+        return tf_map.get(timeframe, 5)

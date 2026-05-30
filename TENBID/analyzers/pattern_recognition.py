@@ -5,21 +5,15 @@ Pattern Recognition Analyzer
 Поддерживает мульти-ТФ анализ.
 """
 import numpy as np
+import pandas as pd
 from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
-from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph, DataLineage, DataSource, DataQuality, LineageTracker
 from .multi_tf_context import MultiTFContextAggregator, TimeframeResult
 
 class PatternRecognitionAnalyzer:
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
-        self.lineage = DataLineage(
-            source=DataSource.CALCULATED,
-            quality=DataQuality.MEDIUM,
-            timestamp=datetime.now(),
-            calculation_method="pattern_recognition",
-            metadata={"version": "2.0", "type": "candlestick_and_chart_patterns", "multi_tf": True}
-        )
         self.aggregator = MultiTFContextAggregator()
         
     def analyze(self, context) -> Dict[str, Any]:
@@ -79,7 +73,7 @@ class PatternRecognitionAnalyzer:
         return tf_data
     
     def _analyze_single_timeframe(self, df, timeframe: str) -> Dict[str, Any]:
-        """Анализ паттернов на одном ТФ."""
+        """Анализ паттернов на одном ТФ с генерацией прогнозов."""
         # 1. Анализ свечных паттернов (Микро)
         candle_patterns = self._analyze_candlestick_patterns(df)
         
@@ -89,13 +83,22 @@ class PatternRecognitionAnalyzer:
         # Агрегация результатов
         signal, confidence, details = self._aggregate_signals(candle_patterns, chart_patterns)
         
+        # 3. Генерация прогнозов на основе найденных паттернов
+        current_price = df['close'].iloc[-1]
+        forecasts = self._generate_pattern_forecasts(
+            df, timeframe, current_price,
+            candle_patterns, chart_patterns,
+            signal, confidence
+        )
+        
         return {
             "timeframe": timeframe,
             "signal": signal,
             "confidence": confidence,
             "candle_patterns": candle_patterns,
             "chart_patterns": chart_patterns,
-            "details": details
+            "details": details,
+            "forecasts": forecasts
         }
 
     def _analyze_candlestick_patterns(self, df) -> List[Dict]:
@@ -355,6 +358,242 @@ class PatternRecognitionAnalyzer:
             "charts": chart_patterns,
             "dominant_pattern": chart_patterns[0]['type'] if chart_patterns else (candle_patterns[0]['type'] if candle_patterns else None)
         }
+
+    def _generate_pattern_forecasts(self, df, timeframe, current_price, 
+                                    candle_patterns, chart_patterns, 
+                                    signal, confidence) -> List[Dict]:
+        """
+        Генерирует прогнозы на основе найденных паттернов.
+        
+        Логика:
+        - Свечные паттерны → краткосрочные прогнозы (1-3 свечи)
+        - Графические фигуры → среднесрочные прогнозы (5-10 свечей)
+        - Используем целевые уровни из паттернов (H&S, треугольники и т.д.)
+        """
+        forecasts = []
+        tf_minutes = self._get_tf_minutes(timeframe)
+        
+        # Рассчитываем ATR для определения диапазонов
+        atr = df['high'].rolling(14).mean().iloc[-1] - df['low'].rolling(14).mean().iloc[-1]
+        if pd.isna(atr) or atr == 0:
+            atr = current_price * 0.01  # 1% fallback
+        
+        # Горизонты для свечных паттернов (краткосрочные)
+        candle_horizons = [1, 3]
+        
+        # Горизонты для графических фигур (среднесрочные)
+        chart_horizons = [5, 10]
+        
+        # 1. Прогнозы на основе свечных паттернов
+        for pattern in candle_patterns:
+            if pattern['signal'] == 0:
+                continue
+                
+            pattern_type = pattern['type']
+            pattern_signal = pattern['signal']
+            pattern_strength = pattern['strength']
+            
+            for horizon_candles in candle_horizons:
+                horizon_minutes = horizon_candles * tf_minutes
+                
+                # Определяем сценарий и целевую цену
+                if pattern_signal > 0:
+                    # Бычий паттерн
+                    if 'Engulfing' in pattern_type or 'Morning Star' in pattern_type:
+                        scenario = "PATTERN_REVERSAL_UP"
+                        price_target = current_price + (atr * 1.5)
+                        factors = [f"pattern_{pattern_type.lower().replace(' ', '_')}", "reversal_signal"]
+                    elif 'Hammer' in pattern_type:
+                        scenario = "PATTERN_BOUNCE"
+                        price_target = current_price + (atr * 1.0)
+                        factors = [f"pattern_{pattern_type.lower()}", "support_test"]
+                    elif 'Three White Soldiers' in pattern_type:
+                        scenario = "PATTERN_CONTINUATION_UP"
+                        price_target = current_price + (atr * 2.0)
+                        factors = [f"pattern_three_white_soldiers", "strong_momentum"]
+                    else:
+                        scenario = "PATTERN_UP"
+                        price_target = current_price + (atr * 1.0)
+                        factors = [f"pattern_{pattern_type.lower().replace(' ', '_')}"]
+                else:
+                    # Медвежий паттерн
+                    if 'Engulfing' in pattern_type or 'Evening Star' in pattern_type:
+                        scenario = "PATTERN_REVERSAL_DOWN"
+                        price_target = current_price - (atr * 1.5)
+                        factors = [f"pattern_{pattern_type.lower().replace(' ', '_')}", "reversal_signal"]
+                    elif 'Hanging Man' in pattern_type:
+                        scenario = "PATTERN_REJECTION"
+                        price_target = current_price - (atr * 1.0)
+                        factors = [f"pattern_{pattern_type.lower().replace(' ', '_')}", "resistance_test"]
+                    elif 'Three Black Crows' in pattern_type:
+                        scenario = "PATTERN_CONTINUATION_DOWN"
+                        price_target = current_price - (atr * 2.0)
+                        factors = [f"pattern_three_black_crows", "strong_momentum"]
+                    else:
+                        scenario = "PATTERN_DOWN"
+                        price_target = current_price - (atr * 1.0)
+                        factors = [f"pattern_{pattern_type.lower().replace(' ', '_')}"]
+                
+                # Диапазон цен
+                price_range_width = atr * 0.5
+                price_range = {
+                    "min": min(current_price, price_target) - price_range_width,
+                    "max": max(current_price, price_target) + price_range_width
+                }
+                
+                # Уверенность зависит от силы паттерна
+                forecast_confidence = pattern_strength * 0.9  # Немного снижаем для консервативности
+                
+                # Создаём lineage для прогноза
+                forecast_lineage = LineageTracker.create_calculated(
+                    method=f"pattern_forecast_{pattern_type.replace(' ', '_')}_{horizon_candles}c",
+                    dependencies=[],
+                    quality=DataQuality.MEDIUM,
+                    metadata={
+                        'pattern_type': pattern_type,
+                        'pattern_signal': pattern_signal,
+                        'pattern_strength': pattern_strength,
+                        'horizon_candles': horizon_candles,
+                        'current_price': current_price
+                    }
+                )
+                
+                forecasts.append({
+                    "timeframe": timeframe,
+                    "horizon_candles": horizon_candles,
+                    "horizon_minutes": horizon_minutes,
+                    "scenario": scenario,
+                    "price_target": round(price_target, 6),
+                    "price_range": {
+                        "min": round(price_range["min"], 6),
+                        "max": round(price_range["max"], 6)
+                    },
+                    "confidence": round(forecast_confidence, 3),
+                    "strength": round(pattern_strength, 3),
+                    "factors": factors,
+                    "lineage": forecast_lineage
+                })
+        
+        # 2. Прогнозы на основе графических фигур
+        for pattern in chart_patterns:
+            if pattern['signal'] == 0:
+                continue
+                
+            pattern_type = pattern['type']
+            pattern_signal = pattern['signal']
+            pattern_strength = pattern['strength']
+            
+            for horizon_candles in chart_horizons:
+                horizon_minutes = horizon_candles * tf_minutes
+                
+                # Определяем сценарий и целевую цену
+                if pattern_signal > 0:
+                    # Бычий паттерн
+                    if 'Head and Shoulders' in pattern_type and 'Inverse' in pattern_type:
+                        scenario = "CHART_REVERSAL_UP"
+                        # Используем целевой уровень из паттерна, если есть
+                        if 'target' in pattern:
+                            price_target = pattern['target']
+                        else:
+                            price_target = current_price + (atr * 3.0)
+                        factors = ["inverse_head_shoulders", "major_reversal"]
+                    elif 'Double Bottom' in pattern_type:
+                        scenario = "CHART_DOUBLE_BOTTOM"
+                        price_target = current_price + (atr * 2.5)
+                        factors = ["double_bottom", "support_confirmed"]
+                    elif 'Ascending Triangle' in pattern_type:
+                        scenario = "CHART_BREAKOUT_UP"
+                        price_target = current_price + (atr * 2.0)
+                        factors = ["ascending_triangle", "breakout_expected"]
+                    elif 'Bull Flag' in pattern_type:
+                        scenario = "CHART_CONTINUATION_UP"
+                        price_target = current_price + (atr * 2.5)
+                        factors = ["bull_flag", "continuation_pattern"]
+                    elif 'Cup' in pattern_type:
+                        scenario = "CHART_CUP_HANDLE"
+                        price_target = current_price + (atr * 2.0)
+                        factors = ["cup_and_handle", "accumulation"]
+                    else:
+                        scenario = "CHART_PATTERN_UP"
+                        price_target = current_price + (atr * 2.0)
+                        factors = [f"chart_{pattern_type.lower().replace(' ', '_')}"]
+                else:
+                    # Медвежий паттерн
+                    if 'Head and Shoulders' in pattern_type and 'Top' in pattern_type:
+                        scenario = "CHART_REVERSAL_DOWN"
+                        # Используем целевой уровень из паттерна, если есть
+                        if 'target' in pattern:
+                            price_target = pattern['target']
+                        else:
+                            price_target = current_price - (atr * 3.0)
+                        factors = ["head_shoulders_top", "major_reversal"]
+                    elif 'Double Top' in pattern_type:
+                        scenario = "CHART_DOUBLE_TOP"
+                        price_target = current_price - (atr * 2.5)
+                        factors = ["double_top", "resistance_confirmed"]
+                    elif 'Descending Triangle' in pattern_type:
+                        scenario = "CHART_BREAKDOWN"
+                        price_target = current_price - (atr * 2.0)
+                        factors = ["descending_triangle", "breakdown_expected"]
+                    elif 'Bear Flag' in pattern_type:
+                        scenario = "CHART_CONTINUATION_DOWN"
+                        price_target = current_price - (atr * 2.5)
+                        factors = ["bear_flag", "continuation_pattern"]
+                    else:
+                        scenario = "CHART_PATTERN_DOWN"
+                        price_target = current_price - (atr * 2.0)
+                        factors = [f"chart_{pattern_type.lower().replace(' ', '_')}"]
+                
+                # Диапазон цен (шире для графических фигур)
+                price_range_width = atr * 1.0
+                price_range = {
+                    "min": min(current_price, price_target) - price_range_width,
+                    "max": max(current_price, price_target) + price_range_width
+                }
+                
+                # Уверенность зависит от силы паттерна
+                forecast_confidence = pattern_strength * 0.85
+                
+                # Создаём lineage для прогноза
+                forecast_lineage = LineageTracker.create_calculated(
+                    method=f"chart_pattern_forecast_{pattern_type.replace(' ', '_')}_{horizon_candles}c",
+                    dependencies=[],
+                    quality=DataQuality.MEDIUM,
+                    metadata={
+                        'pattern_type': pattern_type,
+                        'pattern_signal': pattern_signal,
+                        'pattern_strength': pattern_strength,
+                        'horizon_candles': horizon_candles,
+                        'current_price': current_price
+                    }
+                )
+                
+                forecasts.append({
+                    "timeframe": timeframe,
+                    "horizon_candles": horizon_candles,
+                    "horizon_minutes": horizon_minutes,
+                    "scenario": scenario,
+                    "price_target": round(price_target, 6),
+                    "price_range": {
+                        "min": round(price_range["min"], 6),
+                        "max": round(price_range["max"], 6)
+                    },
+                    "confidence": round(forecast_confidence, 3),
+                    "strength": round(pattern_strength, 3),
+                    "factors": factors,
+                    "lineage": forecast_lineage
+                })
+        
+        return forecasts
+    
+    def _get_tf_minutes(self, timeframe):
+        """Конвертирует таймфрейм в минуты"""
+        mapping = {
+            '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+            '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720,
+            '1d': 1440, '3d': 4320, '1w': 10080
+        }
+        return mapping.get(timeframe, 5)
 
     def _empty_result(self, reason: str) -> Dict:
         return {
