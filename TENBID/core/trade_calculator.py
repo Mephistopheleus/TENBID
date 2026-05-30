@@ -90,6 +90,9 @@ class TradeCalculator:
         Returns:
             Словарь с решением и деталями расчёта
         """
+        # Autotuner may update parameters during cold-start shadow bootstrap.
+        self.params = self._get_params_from_autotuner()
+
         # 1. Получаем зоны максимальной вероятности
         zones = matrix.find_max_probability_zones(
             min_probability=self.params['min_probability_threshold']

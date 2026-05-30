@@ -67,6 +67,10 @@ class Autotuner:
         self.history_window = 100  # Analyze last N trades
         # CRITICAL: Cold start protection - minimum trades before tuning
         self.MIN_TRADES_FOR_TUNING = 50  # Must have 50+ closed trades before optimization
+        self.SHADOW_BOOTSTRAP_MIN_SAMPLES = 100
+        self.SHADOW_BOOTSTRAP_MAX_TRUST = 0.35
+        self.SHADOW_BOOTSTRAP_MIN_NET_PROFIT_FLOOR = 0.40
+        self.SHADOW_BOOTSTRAP_MIN_PROBABILITY_FLOOR = 0.55
         
         # Granular trust: analyzer -> timeframe -> metric -> regime -> weight
         # Example: trust_weights['fractal']['5m']['confidence']['TRENDING'] = 0.85
@@ -343,7 +347,10 @@ class Autotuner:
             
             # CRITICAL: Cold start protection
             if total_real_trades < self.MIN_TRADES_FOR_TUNING:
-                logger.info(f"Cold start protection: Only {total_real_trades}/{self.MIN_TRADES_FOR_TUNING} trades. Using default weights.")
+                if self._try_shadow_bootstrap(cursor, total_real_trades):
+                    return self.current_weights
+
+                logger.info(f"Cold start protection: Only {total_real_trades}/{self.MIN_TRADES_FOR_TUNING} real trades. Shadow bootstrap not active; using current defaults.")
                 return self.current_weights
             
             # Fetch recent history
@@ -374,16 +381,102 @@ class Autotuner:
         finally:
             conn.close()
 
+    def _try_shadow_bootstrap(self, cursor: sqlite3.Cursor, total_real_trades: int) -> bool:
+        """
+        Use completed shadow/forbidden outcomes as low-trust cold-start evidence.
+
+        Shadow trades are not treated as real trades. They can only make small,
+        bounded TradeCalculator nudges, and only when the skipped-trade sample is
+        at least neutral. If shadow outcomes are poor, the bootstrap explicitly
+        keeps the system conservative.
+        """
+        cursor.execute("""
+            SELECT pnl_percent, is_winner, exit_reason, shadow_reason
+            FROM trade_analysis_log
+            WHERE is_shadow = 1
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (self.history_window,))
+        rows = cursor.fetchall()
+
+        sample_size = len(rows)
+        if sample_size < self.SHADOW_BOOTSTRAP_MIN_SAMPLES:
+            logger.info(
+                "Cold start protection: Only %s/%s real trades and %s/%s shadow outcomes. "
+                "Waiting for enough shadow evidence.",
+                total_real_trades, self.MIN_TRADES_FOR_TUNING,
+                sample_size, self.SHADOW_BOOTSTRAP_MIN_SAMPLES,
+            )
+            return False
+
+        pnls = [float(row[0] or 0.0) for row in rows]
+        winners = sum(1 for row in rows if int(row[1] or 0) == 1 and float(row[0] or 0.0) > 0.0)
+        winrate = winners / sample_size if sample_size else 0.0
+        avg_pnl = float(np.mean(pnls)) if pnls else 0.0
+        recent_avg_pnl = float(np.mean(pnls[:30])) if len(pnls) >= 30 else avg_pnl
+        stability_penalty = min(0.15, abs(avg_pnl - recent_avg_pnl))
+        sample_trust = min(1.0, sample_size / 200.0)
+        quality_trust = max(0.0, min(1.0, (winrate - 0.35) / 0.35))
+        shadow_trust = min(self.SHADOW_BOOTSTRAP_MAX_TRUST, sample_trust * quality_trust - stability_penalty)
+
+        logger.info(
+            "Shadow bootstrap stats: samples=%s, avg_pnl=%.3f%%, recent_avg=%.3f%%, "
+            "winrate=%.1f%%, trust=%.2f",
+            sample_size, avg_pnl, recent_avg_pnl, winrate * 100.0, shadow_trust,
+        )
+
+        if avg_pnl < 0.0 or winrate < 0.40 or shadow_trust <= 0.0:
+            logger.info(
+                "Shadow bootstrap: skipped trades are not profitable enough. "
+                "Keeping conservative TradeCalculator params; no loosening applied."
+            )
+            return True
+
+        old_min_profit = float(self.calculator_params.get('min_net_profit_pct', 0.5))
+        old_min_probability = float(self.calculator_params.get('min_probability_threshold', 0.60))
+        max_step = 0.05 * shadow_trust
+
+        target_min_profit = max(
+            self.SHADOW_BOOTSTRAP_MIN_NET_PROFIT_FLOOR,
+            old_min_profit - max_step,
+        )
+        target_min_probability = max(
+            self.SHADOW_BOOTSTRAP_MIN_PROBABILITY_FLOOR,
+            old_min_probability - max_step,
+        )
+
+        changed = False
+        if target_min_profit < old_min_profit:
+            self.calculator_params['min_net_profit_pct'] = round(target_min_profit, 4)
+            changed = True
+        if target_min_probability < old_min_probability:
+            self.calculator_params['min_probability_threshold'] = round(target_min_probability, 4)
+            changed = True
+
+        if changed:
+            self._save_calculator_params()
+            logger.info(
+                "Shadow bootstrap applied cautiously: min_net_profit_pct %.3f -> %.3f, "
+                "min_probability_threshold %.3f -> %.3f",
+                old_min_profit, self.calculator_params['min_net_profit_pct'],
+                old_min_probability, self.calculator_params['min_probability_threshold'],
+            )
+        else:
+            logger.info("Shadow bootstrap found no safe parameter change.")
+
+        return True
+
     def _row_to_snapshot(self, row: tuple) -> TradeContextSnapshot:
         # Mapping DB columns to dataclass fields (simplified for brevity)
         # Assuming column order matches insert statement roughly
         return TradeContextSnapshot(
             trade_id=row[1], timestamp=row[2], symbol=row[3], side=row[4],
-            btc_correlation=row[5], fractal_score=row[6], orderbook_score=row[7],
-            pattern_score=row[8], regime_score=row[9], regime_type=row[10],
-            weights_used=json.loads(row[11]), sl_percent=row[12], position_size=row[13],
-            pnl_percent=row[14], pnl_usdt=row[15], is_winner=bool(row[16]),
-            exit_reason=row[17], max_drawdown_during_trade=row[18], max_profit_during_trade=row[19],
+            btc_correlation=row[5], btc_confidence=row[6], fractal_score=row[7], orderbook_score=row[8],
+            pattern_score=row[9], regime_score=row[10], regime_type=row[11],
+            weights_used=json.loads(row[12]), sl_percent=row[13], position_size=row[14],
+            pnl_percent=row[15], pnl_usdt=row[16], is_winner=bool(row[17]),
+            exit_reason=row[18], max_drawdown_during_trade=row[19], max_profit_during_trade=row[20],
+            is_shadow=bool(row[21]), shadow_reason=row[22],
             entry_price=0.0, tp_percent=0.0, exit_price=0.0, final_confidence=0.0 # Missing in simple select, fill defaults
         )
 
