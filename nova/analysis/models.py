@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from nova.core.evidence import CardStage, EvidenceTier
 from nova.core.ids import ANALYSIS, new_id
 
 
@@ -44,6 +45,12 @@ class AnalysisResult:
     parameters_used: Dict[str, Any] = field(default_factory=dict)
     input_ids: List[str] = field(default_factory=list)
     dependency_group: str = "unknown"
+    stage: str = CardStage.RAW
+    evidence_tier: str = EvidenceTier.PRIMARY
+    input_matrix_id: Optional[str] = None
+    parent_analysis_result_ids: List[str] = field(default_factory=list)
+    parent_card_ids: List[str] = field(default_factory=list)
+    feedback_depth: int = 0
     evidence_refs: List[EvidenceRef] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     analysis_result_id: str = field(default_factory=lambda: new_id(ANALYSIS))
@@ -57,6 +64,10 @@ class StateContribution:
     confidence: float
     severity: str
     ttl_sec: int = 300
+    stage: str = CardStage.RAW
+    evidence_tier: str = EvidenceTier.PRIMARY
+    input_matrix_id: Optional[str] = None
+    feedback_depth: int = 0
+    source_card_ids: List[str] = field(default_factory=list)
     evidence_refs: List[EvidenceRef] = field(default_factory=list)
     state_contribution_id: str = field(default_factory=lambda: new_id("STATE_CONTRIB"))
-

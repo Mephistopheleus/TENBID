@@ -8,9 +8,11 @@ knowing analyzer-specific payload internals.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from nova.analysis.models import EvidenceRef
+from nova.core.evidence import CardStage, EvidenceTier, MatrixFieldRole, MatrixZoneStatus
 from nova.core.ids import FORECAST, MATRIX, new_id
 
 
@@ -28,8 +30,18 @@ class ForecastContribution:
     weight: float = 1.0
     dependency_group: str = "unknown"
     decay_sec: int = 300
+    stage: str = CardStage.RAW
+    evidence_tier: str = EvidenceTier.PRIMARY
+    input_matrix_id: Optional[str] = None
+    feedback_depth: int = 0
+    source_card_ids: List[str] = field(default_factory=list)
+    parent_contribution_ids: List[str] = field(default_factory=list)
+    phenomenon: Optional[str] = None
+    field_shape: Optional[str] = None
+    invalidation_price: Optional[float] = None
     contribution_id: str = field(default_factory=lambda: new_id(FORECAST))
     evidence_refs: List[EvidenceRef] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     payload: Dict[str, object] = field(default_factory=dict)
 
 
@@ -42,6 +54,19 @@ class MatrixZone:
     probability: float
     confidence: float
     contributor_ids: List[str]
+    field_role: str = MatrixFieldRole.CORE
+    status: str = MatrixZoneStatus.ACTIVE
+    core_price_low: Optional[float] = None
+    core_price_high: Optional[float] = None
+    halo_price_low: Optional[float] = None
+    halo_price_high: Optional[float] = None
+    agreement_score: float = 0.0
+    conflict_score: float = 0.0
+    importance_score: float = 0.0
+    source_analysis_result_ids: List[str] = field(default_factory=list)
+    source_card_ids: List[str] = field(default_factory=list)
+    recheck_reasons: List[str] = field(default_factory=list)
+    payload: Dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -50,6 +75,8 @@ class ForecastMatrix:
     cycle_id: str
     zones: List[MatrixZone]
     contributor_ids: List[str]
+    source_card_ids: List[str] = field(default_factory=list)
+    primary_only: bool = True
     matrix_id: str = field(default_factory=lambda: new_id(MATRIX))
 
 
