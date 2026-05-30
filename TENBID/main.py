@@ -26,8 +26,8 @@ from analyzers.pattern_recognition import PatternRecognitionAnalyzer
 from analyzers.market_regime import MarketRegimeAnalyzer
 from core.analysis_context import AnalysisContext
 from confidence.confidence_system import ConfidenceSystem
-from trading.position_sizer import PositionSizer
-from trading.smart_trailing import SmartTrailing
+from core.trade_calculator import TradeCalculator
+from trading.adaptive_trailing import AdaptiveTrailing
 from shadow.shadow_calculator import ShadowCalculator
 from shadow.shadow_lab import ShadowLab
 from core.autotuner import Autotuner, init_autotuner_db, TradeContextSnapshot
@@ -249,22 +249,23 @@ async def main():
     pattern_analyzer = PatternRecognitionAnalyzer()
     market_regime_analyzer = MarketRegimeAnalyzer()
     confidence_sys = ConfidenceSystem(config)
-    position_sizer = PositionSizer(config)
-    trailing = SmartTrailing(config)
     shadow = ShadowCalculator(config, db, binance_connector=binance)
     autotuner = Autotuner()  # Initialize Autotuner
     
     # Initialize Probability Matrix with autotuner parameters
-    matrix_params = {
-        'matrix_time_horizon': 60,  # 60 минут горизонт
-        'matrix_time_resolution': 5,  # 5 минут шаг
-        'matrix_price_resolution': 0.5,  # 0.5% шаг цены
-        'matrix_blur_radius': 1.0,  # Радиус размытия
-        'matrix_min_probability': 0.1,  # Минимальный порог
-        'matrix_max_zones': 10  # Максимум зон
-    }
+    matrix_params = autotuner.get_matrix_params()
     probability_matrix = ProbabilityMatrix(autotuner_params=matrix_params)
-    logger.info("📊 Probability Matrix initialized with autotuner parameters")
+    logger.info(f"📊 Probability Matrix initialized: {matrix_params}")
+
+    # Initialize TradeCalculator with autotuner parameters
+    calculator_params = autotuner.get_trade_calculator_params()
+    trade_calculator = TradeCalculator(config, autotuner)
+    logger.info(f"🧮 TradeCalculator initialized: {calculator_params}")
+
+    # Initialize AdaptiveTrailing with autotuner parameters
+    trailing_params = autotuner.get_trailing_params()
+    adaptive_trailing = AdaptiveTrailing(config, autotuner)
+    logger.info(f"📈 AdaptiveTrailing initialized: {trailing_params}")
     
     shadow_lab = ShadowLab(db.db_path)  # Initialize Shadow Lab
     reporter = Reporter(db, config)
@@ -443,19 +444,28 @@ async def main():
                         position_manager.remove_position(trade_id)
                         continue
                     
-                    # Проверяем trailing stop
+                    # Проверяем adaptive trailing stop
                     if pos['side'] == 'BUY':
                         atr = analysis.get('5m', {}).get('atr', 0)
-                        trail_result = trailing.calculate_trail(
+                        volatility = atr / current_price if current_price > 0 else 0.01
+
+                        # Используем AdaptiveTrailing
+                        new_sl = adaptive_trailing.update_trailing_stop(
                             entry_price=pos['entry_price'],
                             current_price=current_price,
+                            current_sl=pos['sl_price'],
                             atr=atr,
-                            high_since_entry=pos['high_since_entry'],
-                            context=context
+                            volatility=volatility
                         )
                         
-                        if trail_result and current_price <= trail_result['trail_price']:
-                            logger.info(f"[CYCLE_{cycle_count}] CLOSE POSITION {trade_id}: Trailing Stop at {trail_result['trail_price']}")
+                        # Обновляем SL если изменился
+                        if new_sl != pos['sl_price']:
+                            pos['sl_price'] = new_sl
+                            logger.info(f"[CYCLE_{cycle_count}] Updated trailing SL for {trade_id}: {new_sl:.6f}")
+
+                        # Проверяем выход по trailing stop
+                        if current_price <= pos['sl_price']:
+                            logger.info(f"[CYCLE_{cycle_count}] CLOSE POSITION {trade_id}: Trailing Stop at {pos['sl_price']}")
                             pnl_pct = (current_price - pos['entry_price']) / pos['entry_price'] * 100
                             pnl_usdt = pnl_pct * pos['position_pct'] * config.getfloat('GENERAL', 'initial_balance') / 100
                             
@@ -486,24 +496,33 @@ async def main():
                         'min_confidence': min(lg.confidence for lg in confidence_result.get('component_lineages', {}).values()) if confidence_result.get('component_lineages') else 0
                     }
                 }
-                
-                # Decision making
-                if current_confidence >= threshold:
-                    # Calculate position size dynamically
-                    position_info = position_sizer.calculate(
-                        current_confidence,
-                        context,
-                        current_price
-                    )
-                    
+
+                # Decision making using TradeCalculator
+                regime_type = regime_result.get('regime', 'UNKNOWN')
+
+                # Используем TradeCalculator для принятия решения
+                volatility = analysis.get('5m', {}).get('atr', 0) / current_price if current_price > 0 else 0.01
+                trade_decision = trade_calculator.calculate_trade(
+                    matrix=probability_matrix,
+                    current_price=current_price,
+                    market_context={
+                        'volatility': volatility,
+                        'regime_type': regime_type,
+                        'atr': analysis.get('5m', {}).get('atr', 0)
+                    }
+                )
+
+                if trade_decision['decision'] == 'OPEN':
                     signal_data['decision'] = 'OPEN'
-                    signal_data['position'] = position_info
+                    signal_data['trade_calculation'] = trade_decision
                     signal_data['weights_used'] = optimized_weights
                     
-                    logger.info(f"[CYCLE_{cycle_count}] SIGNAL: OPEN | Confidence: {current_confidence:.3f} >= {threshold:.3f}")
-                    logger.info(f"Position: {position_info['position_pct']}% | SL: {position_info['sl_pct']}% | TP R/R: {position_info['rr_ratio']}")
-                    logger.info(f"SL Reasoning: ATR({position_info['reasoning']['atr_source']})={position_info['reasoning']['atr_pct']:.2f}% | Regime: {position_info['reasoning']['regime_adjustment']} | Patterns: {position_info['reasoning']['pattern_adjustment']}")
-                    logger.info(f"Data Quality Factor: {position_info['reasoning']['data_quality_factor']:.2f} | Details: {position_info['reasoning']['quality_details']}")
+                    logger.info(f"[CYCLE_{cycle_count}] 🎯 SIGNAL: OPEN | Probability: {trade_decision['best_zone']['probability']:.3f}")
+                    logger.info(f"📊 Zone: {trade_decision['best_zone']['scenario']} @ {trade_decision['best_zone']['time_minutes']:.1f}min, Price: {trade_decision['best_zone']['price']:.6f}")
+                    logger.info(f"💰 Entry: {trade_decision['entry_price']:.6f} | SL: {trade_decision['sl_price']:.6f} ({trade_decision['sl_percent']:.2f}%)")
+                    logger.info(f"📈 Expected Profit: {trade_decision['expected_profit_pct']:.2f}% | Net: {trade_decision['net_profit_pct']:.2f}%")
+                    logger.info(f"⚖️ R/R: {trade_decision['risk_reward_ratio']:.2f} | Costs: {trade_decision['total_costs_pct']:.3f}%")
+                    logger.info(f"🎲 Reasoning: {trade_decision['reasoning']}")
                     
                     # Create trade snapshot for Autotuner tracking
                     analyzer_results = {
@@ -513,21 +532,6 @@ async def main():
                         'pattern': pattern_result,
                         'regime': regime_result
                     }
-                    trade_snapshot = shadow.create_trade_snapshot(
-                        trade_info={
-                            'trade_id': f"live_{cycle_count}",
-                            'symbol': symbol,
-                            'side': 'BUY',
-                            'entry_price': current_price,
-                            'sl_percent': position_info['sl_pct'],
-                            'tp_percent': position_info.get('tp_pct', 2.0),
-                            'position_size': position_info['position_pct'],
-                            'confidence': current_confidence,
-                            'reasoning': position_info['reasoning']
-                        },
-                        analyzer_results=analyzer_results,
-                        weights=optimized_weights
-                    )
                     
                     # Сохраняем как TradeContextSnapshot для Autotuner
                     snapshot_obj = TradeContextSnapshot(
@@ -541,13 +545,13 @@ async def main():
                         orderbook_score=analyzer_results['orderbook'].get('confidence', 0),
                         pattern_score=analyzer_results['pattern'].get('signal', 0),
                         regime_score=analyzer_results['regime'].get('confidence', 0),
-                        regime_type=analyzer_results['regime'].get('regime', 'UNKNOWN'),
+                        regime_type=regime_type,
                         weights_used=optimized_weights,
-                        entry_price=current_price,
-                        sl_percent=position_info['sl_pct'],
-                        tp_percent=position_info.get('tp_pct', 2.0),
-                        position_size=position_info['position_pct'],
-                        final_confidence=current_confidence,
+                        entry_price=trade_decision['entry_price'],
+                        sl_percent=trade_decision['sl_percent'],
+                        tp_percent=trade_decision['expected_profit_pct'],
+                        position_size=config.getfloat('RISK', 'max_position_pct'),  # From config for now
+                        final_confidence=trade_decision['best_zone']['probability'],
                         exit_price=None,
                         exit_reason=None,
                         pnl_percent=0.0,
@@ -561,11 +565,11 @@ async def main():
                     position_manager.add_position(
                         f"live_{cycle_count}",
                         {
-                            'entry_price': current_price,
+                            'entry_price': trade_decision['entry_price'],
                             'side': 'BUY',
-                            'sl_price': position_info['sl_price'],
-                            'tp_price': position_info['tp_price'],
-                            'position_pct': position_info['position_pct']
+                            'sl_price': trade_decision['sl_price'],
+                            'tp_price': trade_decision['entry_price'] * (1 + trade_decision['expected_profit_pct'] / 100),
+                            'position_pct': config.getfloat('RISK', 'max_position_pct')
                         },
                         snapshot_obj
                     )
@@ -575,8 +579,9 @@ async def main():
                         try:
                             # Calculate quantity based on position size and balance
                             balance = config.getfloat('GENERAL', 'initial_balance')
-                            usdt_amount = balance * position_info['position_pct'] / 100
-                            quantity = usdt_amount / current_price
+                            position_pct = config.getfloat('RISK', 'max_position_pct')
+                            usdt_amount = balance * position_pct / 100
+                            quantity = usdt_amount / trade_decision['entry_price']
                             
                             # Place MARKET order for immediate execution
                             order_result = await binance.place_market_order(side='BUY', quantity=quantity)
@@ -590,10 +595,11 @@ async def main():
                             position_manager.remove_position(f"live_{cycle_count}")
                     
                 else:
+                    # HOLD decision from TradeCalculator
                     signal_data['decision'] = 'HOLD'
-                    signal_data['reason'] = f'Low confidence: {current_confidence:.2f} < {threshold:.2f}'
+                    signal_data['reason'] = trade_decision.get('reasoning', 'Matrix analysis suggests HOLD')
                     
-                    logger.info(f"[CYCLE_{cycle_count}] HOLD | Confidence: {current_confidence:.3f} < {threshold:.3f}")
+                    logger.info(f"[CYCLE_{cycle_count}] 🛑 HOLD | Reason: {signal_data['reason']}")
                     
                     # Shadow calculation for forbidden trades - FULL CYCLE
                     if config.getboolean('SHADOW', 'save_forbidden_trades'):
@@ -601,9 +607,16 @@ async def main():
                         shadow_result = shadow.analyze_forbidden_trade(signal_data, context_snapshot=context.to_dict() if hasattr(context, 'to_dict') else None)
                         
                         # 2. Create complete snapshot for Autotuner (NEW)
+                        analyzer_results = {
+                            'btc': btc_result,
+                            'fractal': fractal_result,
+                            'orderbook': orderbook_result,
+                            'pattern': pattern_result,
+                            'regime': regime_result
+                        }
                         forbidden_snapshot = shadow.create_forbidden_snapshot(
                             signal_data=signal_data,
-                            analyzer_results=analysis,
+                            analyzer_results=analyzer_results,
                             weights=autotuner.current_weights,
                             context_snapshot=context.to_dict() if hasattr(context, 'to_dict') else None
                         )
@@ -616,7 +629,7 @@ async def main():
                         if weak_factors:
                             logger.debug(f"Sent {len(weak_factors)} weak factor observations to Shadow Lab")
                         
-                        logger.info(f"Forbidden trade tracked: {forbidden_snapshot['trade_id']} (confidence: {forbidden_snapshot['final_confidence']:.3f})")
+                        logger.info(f"Forbidden trade tracked: {forbidden_snapshot['trade_id']}")
                 
                 # Log signal to database
                 db.log_signal(signal_data)

@@ -20,10 +20,129 @@ import json
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
+from enum import Enum
 import hashlib
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class DataSource(Enum):
+    """Legacy data source identifiers used by analyzers."""
+    BINANCE_API = "binance_api"
+    BINANCE_WEBSOCKET = "binance_websocket"
+    MARKET_DATA = "market_data"
+    SYNTHETIC_TF = "synthetic_timeframe"
+    CALCULATED = "calculated"
+    EXTERNAL = "external"
+    USER_INPUT = "user_input"
+
+
+class DataQuality(Enum):
+    """Legacy data quality levels used by analyzers."""
+    HIGH = 1.0
+    MEDIUM = 0.7
+    LOW = 0.4
+    VERY_LOW = 0.2
+
+    @classmethod
+    def from_score(cls, score: float) -> 'DataQuality':
+        if score >= cls.HIGH.value:
+            return cls.HIGH
+        if score >= cls.MEDIUM.value:
+            return cls.MEDIUM
+        if score >= cls.LOW.value:
+            return cls.LOW
+        return cls.VERY_LOW
+
+
+@dataclass
+class DataLineage:
+    """Compatibility lineage object for older analyzer code."""
+    source: DataSource
+    quality: DataQuality
+    timestamp: datetime
+    age_seconds: float = 0.0
+    dependencies: List['DataLineage'] = field(default_factory=list)
+    calculation_method: Optional[str] = None
+    confidence: float = 1.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.age_seconds == 0.0:
+            self.age_seconds = (datetime.now() - self.timestamp).total_seconds()
+        time_decay = max(0.0, 1.0 - (self.age_seconds / 3600))
+        self.confidence = self.quality.value * time_decay
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'source': self.source.value,
+            'quality': self.quality.value,
+            'timestamp': self.timestamp.isoformat(),
+            'age_seconds': self.age_seconds,
+            'calculation_method': self.calculation_method,
+            'confidence': self.confidence,
+            'metadata': self.metadata,
+            'dependencies_count': len(self.dependencies),
+        }
+
+    def get_lineage_tree(self, depth: int = 0) -> str:
+        indent = "  " * depth
+        result = f"{indent}├─ {self.source.value} (q={self.quality.value:.2f}, c={self.confidence:.2f})"
+        if self.calculation_method:
+            result += f" [{self.calculation_method}]"
+        result += "\n"
+        for dependency in self.dependencies:
+            result += dependency.get_lineage_tree(depth + 1)
+        return result
+
+
+class LineageTracker:
+    """Compatibility helper for older analyzer code."""
+
+    @staticmethod
+    def create_from_source(
+        source: DataSource,
+        quality: DataQuality,
+        metadata: Optional[Dict] = None,
+    ) -> DataLineage:
+        return DataLineage(
+            source=source,
+            quality=quality,
+            timestamp=datetime.now(),
+            metadata=metadata or {},
+        )
+
+    @staticmethod
+    def create_calculated(
+        method: str,
+        dependencies: List[DataLineage],
+        quality: DataQuality = DataQuality.MEDIUM,
+        metadata: Optional[Dict] = None,
+    ) -> DataLineage:
+        return DataLineage(
+            source=DataSource.CALCULATED,
+            quality=quality,
+            timestamp=datetime.now(),
+            dependencies=dependencies or [],
+            calculation_method=method,
+            metadata=metadata or {},
+        )
+
+    @staticmethod
+    def merge_lineages(lineages: List[DataLineage], method: str) -> DataLineage:
+        if not lineages:
+            return LineageTracker.create_calculated(method=method, dependencies=[], quality=DataQuality.VERY_LOW)
+        avg_quality = sum(lineage.quality.value for lineage in lineages) / len(lineages)
+        quality = DataQuality.from_score(min(1.0, avg_quality + 0.1))
+        return DataLineage(
+            source=DataSource.CALCULATED,
+            quality=quality,
+            timestamp=datetime.now(),
+            dependencies=lineages,
+            calculation_method=method,
+            metadata={'merged_count': len(lineages)},
+        )
 
 @dataclass
 class LineageNode:

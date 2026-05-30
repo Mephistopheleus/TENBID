@@ -1,7 +1,7 @@
 """Market Analyzer - analyzes price action, trends, support/resistance"""
 import pandas as pd
 import numpy as np
-from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph, DataQuality, LineageTracker
 
 class MarketAnalyzer:
     def __init__(self, config):
@@ -292,7 +292,7 @@ class MarketAnalyzer:
                         "timeframe": timeframe,
                         "horizon_candles": horizon_candles,
                         "horizon_minutes": horizon_minutes,
-                        "scenario": "BOUNCE_DOWN",
+                        "scenario": "resistance_bounce",
                         "price_target": round(bounce_target, 6),
                         "price_range": {
                             "min": round(bounce_target - atr, 6),
@@ -331,7 +331,7 @@ class MarketAnalyzer:
                         "timeframe": timeframe,
                         "horizon_candles": horizon_candles,
                         "horizon_minutes": horizon_minutes,
-                        "scenario": "BOUNCE_UP",
+                        "scenario": "support_bounce",
                         "price_target": round(bounce_target, 6),
                         "price_range": {
                             "min": round(current_price, 6),
@@ -352,4 +352,3 @@ class MarketAnalyzer:
             '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440
         }
         return tf_map.get(timeframe, 5)  # По умолчанию 5 минут
-

@@ -46,9 +46,7 @@ class TradeCalculator:
         Получает параметры от автотюнера.
         В будущем autotuner будет возвращать оптимизированные параметры.
         """
-        # TODO: Реализовать метод get_trade_calculator_params() в autotuner
-        # Пока используем дефолтные значения
-        return {
+        defaults = {
             'min_probability_threshold': 0.6,      # Минимальная вероятность для входа
             'min_net_profit_pct': 0.5,             # Минимальная чистая прибыль (%)
             'max_sl_distance_pct': 2.0,            # Максимальное расстояние до SL (%)
@@ -75,6 +73,9 @@ class TradeCalculator:
                 'chart_breakdown', 'chart_double_top'
             ]
         }
+        if hasattr(self.autotuner, 'get_trade_calculator_params'):
+            defaults.update(self.autotuner.get_trade_calculator_params())
+        return defaults
     
     def calculate_trade(self, matrix: ProbabilityMatrix, current_price: float, 
                        market_context: Dict[str, Any]) -> Dict[str, Any]:

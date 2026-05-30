@@ -15,6 +15,7 @@ class PatternRecognitionAnalyzer:
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
         self.aggregator = MultiTFContextAggregator()
+        self.lineage = None
         
     def analyze(self, context) -> Dict[str, Any]:
         """
@@ -41,6 +42,12 @@ class PatternRecognitionAnalyzer:
         
         # Агрегируем результаты через MultiTFContextAggregator
         aggregated = self.aggregator.aggregate_pattern_signals(per_timeframe_results)
+        self.lineage = LineageTracker.create_calculated(
+            method="pattern_recognition_multi_tf",
+            dependencies=[context.data_lineage] if getattr(context, 'data_lineage', None) else [],
+            quality=DataQuality.MEDIUM if aggregated["confidence"] > 0.5 else DataQuality.LOW,
+            metadata={"timeframes": list(per_timeframe_results.keys())}
+        )
         
         result = {
             "signal": aggregated["signal"],

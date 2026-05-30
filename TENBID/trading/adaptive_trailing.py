@@ -47,9 +47,7 @@ class AdaptiveTrailing:
         Получает параметры от автотюнера.
         В будущем autotuner будет возвращать оптимизированные параметры.
         """
-        # TODO: Реализовать метод get_trailing_params() в autotuner
-        # Пока используем дефолтные значения
-        return {
+        defaults = {
             # Безубыток
             'breakeven_trigger_pct': 0.5,          # При какой прибыли переходить в безубыток
             'breakeven_offset_pct': 0.1,           # Смещение от точки входа (для комиссий)
@@ -85,6 +83,9 @@ class AdaptiveTrailing:
                 'resistance_bounce'  # Для лонгов - отскок от сопротивления негативен
             ]
         }
+        if hasattr(self.autotuner, 'get_trailing_params'):
+            defaults.update(self.autotuner.get_trailing_params())
+        return defaults
     
     def update_trailing(self, trade: Dict[str, Any], matrix: ProbabilityMatrix,
                        current_price: float, atr: float,

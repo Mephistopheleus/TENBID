@@ -8,7 +8,8 @@ Fractal Analysis Module - Multi-Timeframe Support
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
+from core.analysis_context import AnalysisContext
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph, DataSource, DataQuality, LineageTracker
 from analyzers.multi_tf_context import MultiTFContextAggregator
 
 class FractalAnalyzer:

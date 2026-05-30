@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 
-from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph, LineageTracker
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class TFAnalysis:
     volume_score: float  # 0.0 - 1.0
     atr: float
     signal_confidence: float  # 0.0 - 1.0
-    lineage: Optional[DataLineage] = None
+    lineage: Optional[LineageNode] = None
 
 
 @dataclass
@@ -60,7 +60,7 @@ class MultiTFContext:
     composite_confidence: float  # Overall confidence in the context
     
     # Lineage tracking
-    lineage: Optional[DataLineage] = None
+    lineage: Optional[LineageNode] = None
 
 
 class MultiTFContextAggregator:
