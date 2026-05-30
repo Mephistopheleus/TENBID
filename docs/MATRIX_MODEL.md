@@ -13,7 +13,17 @@ Answers:
 - With what probability and confidence?
 - Which contributors support or oppose it?
 
-Forecast contributions are sparse probability blobs, not exact price predictions. Each contribution has source ID, horizon, price zone, probability, confidence, weight, decay and dependency group.
+Forecast contributions are sparse probability blobs, not exact price predictions. Each contribution references an `AnalysisResult` ID and has horizon, price zone, probability, confidence, weight, decay, evidence refs and dependency group.
+
+## Universal analyzer path
+
+Analyzers may produce arbitrary module-specific payloads, but NOVA only reasons over standardized outputs:
+
+- `AnalysisResult`: analyzer passport, payload, parameters used and input lineage.
+- `ForecastContribution`: future price-time zone contribution.
+- `StateContribution`: trust/regime/risk/data-quality contribution.
+
+This allows future analyzers to add new data without changing Matrix internals.
 
 ## StateMatrix
 
@@ -40,3 +50,6 @@ Synthetic 10m/15m/30m/1h built from 5m are not independent votes. They share `de
 
 Orderbook is a short-lived liquidity/SR contributor. It is rate-limited and called on demand or no more often than policy allows.
 
+## Lineage rule
+
+All ForecastMatrix zones store contributor IDs. Contributions reference `analysis_result_id`. TradePlans reference matrix IDs. Outcomes reference TradePlan or Scenario IDs. Autotuner learns by walking this lineage backward.

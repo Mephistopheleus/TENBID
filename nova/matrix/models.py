@@ -1,6 +1,8 @@
 """Matrix data contracts.
 
-Analyzers will later emit ForecastContribution and StateContribution; matrix engines aggregate them.
+Analyzers will later emit AnalysisResult plus ForecastContribution and/or
+StateContribution; matrix engines aggregate standardized contributions without
+knowing analyzer-specific payload internals.
 """
 
 from __future__ import annotations
@@ -8,13 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from nova.analysis.models import EvidenceRef
 from nova.core.ids import FORECAST, MATRIX, new_id
 
 
 @dataclass(frozen=True)
 class ForecastContribution:
     symbol: str
-    source_analysis_id: str
+    source_analysis_result_id: str
     timeframe: str
     horizon_min: int
     price_low: float
@@ -26,7 +29,8 @@ class ForecastContribution:
     dependency_group: str = "unknown"
     decay_sec: int = 300
     contribution_id: str = field(default_factory=lambda: new_id(FORECAST))
-    evidence: Dict[str, object] = field(default_factory=dict)
+    evidence_refs: List[EvidenceRef] = field(default_factory=list)
+    payload: Dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -59,4 +63,3 @@ class StateMatrix:
     data_quality: float
     liquidity_state: Optional[str] = None
     matrix_id: str = field(default_factory=lambda: new_id("STATE"))
-

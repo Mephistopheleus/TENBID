@@ -16,6 +16,6 @@ class AutotuneRecommendation:
     sample_size: int
     confidence: float
     reason: str
+    target_parameter_specs: List[str] = field(default_factory=list)
     rollback_condition: Optional[str] = None
     recommendation_id: str = field(default_factory=lambda: new_id(RECOMMENDATION))
-
