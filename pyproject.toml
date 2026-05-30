@@ -1,0 +1,9 @@
+[project]
+name = "nova-tenbid"
+version = "0.0.0"
+description = "Clean-room NOVA trading system skeleton"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
