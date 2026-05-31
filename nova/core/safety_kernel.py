@@ -2,8 +2,13 @@
 
 SafetyKernel is a hard guardrail, not a calculator and not an analyzer. It should
 only reject states/plans that violate non-negotiable boundaries: mode locks,
-allowed symbol, exposure caps and other owner-defined safety invariants.
+allowed symbol and other owner-defined safety invariants.
 Autotuner may tune working parameters, but it must not tune these boundaries.
+
+Important separation: dynamic capacity questions belong to RiskManager and
+Autotuner. Number/size of independent opportunities depends on balance,
+drawdown, remaining funds, risk budget and context quality; it is not a fixed
+SafetyKernel limit.
 """
 
 from __future__ import annotations
@@ -18,13 +23,16 @@ class SafetyPolicy:
     Values here should come from immutable config/policy, not from Autotuner.
     Shadow/Lab may evaluate whether a boundary was useful or too strict, but any
     change to the boundary is an owner decision, not automatic tuning.
+
+    Do not put dynamic risk sizing here. Trades are evaluated independently by
+    the calculation/risk layer; portfolio capacity is a tunable risk policy, not
+    an immutable safety boundary.
     """
 
     allowed_symbol: str = "DOGEUSDT"
     allowed_mode: str = "TESTNET"
     live_requires_unlock: bool = True
-    require_stop_loss: bool = True
-    max_concurrent_positions: int = 1
+    require_invalidation_boundary: bool = True
 
 
 class SafetyKernel:

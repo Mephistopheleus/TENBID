@@ -29,3 +29,8 @@ Before execution, `TradePlan` must include estimated:
 
 Small gross moves that do not cover costs are rejected before execution.
 
+## Safety vs dynamic risk
+
+SafetyKernel is not the place for a fixed maximum number of simultaneous positions. Capacity is calculated dynamically by RiskManager/Autotuner from planned size, remaining balance, drawdown, risk budget and current context quality.
+
+Independent opportunities should be evaluated independently; one candidate does not mechanically invalidate another just because it exists. Any shared constraint must come from actual balance/risk limits, not from a fixed hard-coded position count.
