@@ -1,0 +1,152 @@
+# DATA_FOUNDATION_TZ.md
+
+Техническое задание на унифицированный слой данных NOVA.
+
+Цель: Binance REST/WS, синтетические таймфреймы, новости и будущие источники должны приводиться к внутренним моделям NOVA до попадания в анализаторы. Анализаторы не должны зависеть от raw JSON конкретной биржи или API.
+
+## 1. Основное правило
+
+```text
+External source payload
+→ NOVA data model
+→ AnalyzerContext / AnalysisPackage
+→ Matrix / Shadow / Autotuner lineage
+```
+
+Нельзя отдавать анализаторам сырой Binance response как основной контракт.
+
+## 2. Data inventory по старым анализаторам
+
+| Старый модуль | Будущая роль NOVA | Нужные данные | NOVA-модели |
+| --- | --- | --- | --- |
+| `market_analyzer.py` | `MarketStructureAnalyzer` | OHLCV candles | `Candle`, `CandleSeries`, `MarketSnapshot` |
+| `market_regime.py` | state/regime analyzer | multi-TF OHLCV | `MarketSnapshot.candles` |
+| `fractal_analysis.py` | structural level analyzer | OHLCV candles | `CandleSeries` |
+| `pattern_recognition.py` | pattern analyzer | OHLCV candles | `CandleSeries` |
+| `volume_profile.py` | volume/value area analyzer | candles now, aggTrades later | `CandleSeries`, `AggTradeSeries` |
+| `orderbook_analysis.py` | liquidity analyzer | orderbook depth | `OrderbookSnapshot`, `OrderbookLevel` |
+| `derivatives_analyzer.py` | futures pressure/state analyzer | funding, OI, long/short | `DerivativesSnapshot` |
+| `btc_correlation.py` | correlation/validation analyzer | primary + BTC candles | `MarketSnapshot.related_candles` |
+| `multi_tf_context.py` | validation/reconciliation layer | multi-TF candles + analysis outputs | `MarketSnapshot`, cards/matrices |
+| `synthetic_timeframes.py` | data builder, not analyzer | base timeframe candles | `CandleSeries` with `DataSourceType.SYNTHETIC` |
+| `data_manager.py` | data layer, not analyzer | REST/WS/cache | `MarketSnapshot`, source refs, quality |
+| `news_sentiment.py` | late state/context analyzer | RSS/news/API | `NewsItem`, `NewsBatch` |
+
+## 3. Базовые модели
+
+Реализованы в `nova/data/models.py`:
+
+- `DataSourceRef`;
+- `DataQualityReport`;
+- `Candle`;
+- `CandleSeries`;
+- `OrderbookLevel`;
+- `OrderbookSnapshot`;
+- `AggTrade`;
+- `AggTradeSeries`;
+- `FundingRate`;
+- `OpenInterestPoint`;
+- `LongShortRatioPoint`;
+- `DerivativesSnapshot`;
+- `NewsItem`;
+- `NewsBatch`;
+- `MarketSnapshot`.
+
+## 4. Source lineage
+
+Каждый data object должен иметь источник:
+
+```text
+BINANCE_REST
+BINANCE_WS
+SYNTHETIC
+INTERNAL
+RSS
+FIXTURE
+UNKNOWN
+```
+
+Источник хранится через `DataSourceRef`.
+
+Это нужно, чтобы Autotuner и Shadow могли различать:
+
+- REST candles;
+- WS candles;
+- synthetic TF;
+- orderbook snapshot;
+- RSS/news;
+- fixture/test data.
+
+## 5. Quality contract
+
+Каждый крупный набор данных должен иметь `DataQualityReport`:
+
+- `is_usable`;
+- `score`;
+- `completeness`;
+- `freshness_sec`;
+- `gap_count`;
+- `issue_codes`;
+- `notes`;
+- `payload`.
+
+Анализатор может отказаться от raw primary output, если quality не проходит его минимальные требования.
+
+## 6. MarketSnapshot
+
+`MarketSnapshot` — единая точка входа для анализаторов.
+
+Он может содержать:
+
+- candles основного символа по TF;
+- related candles, например BTCUSDT;
+- orderbook snapshot;
+- aggTrades;
+- derivatives snapshot;
+- news batch;
+- общий quality report.
+
+Первый рабочий анализатор должен читать данные из `MarketSnapshot`, а не из raw Binance JSON.
+
+## 7. Binance REST/WS порядок
+
+Правильный порядок реализации:
+
+1. Data models;
+2. Binance REST adapter, возвращающий NOVA models;
+3. cache/reconciliation/data quality;
+4. WS live updates;
+5. analyzers.
+
+REST нужен первым для warmup/backfill/reconciliation. WS подключается позже и не должен становиться единственным источником истины.
+
+## 8. Synthetic TF rule
+
+Синтетические таймфреймы являются производными от base timeframe. Они полезны, но не являются независимыми evidence.
+
+Они должны иметь:
+
+```text
+source_type = SYNTHETIC
+dependency_group = ohlcv_resampled
+parent/base series lineage в payload
+```
+
+## 9. Следующий шаг
+
+После Data Foundation:
+
+```text
+Binance REST read-only adapter
+```
+
+Минимум:
+
+- `ping()`;
+- `server_time()`;
+- `get_klines() -> CandleSeries`;
+- `get_orderbook() -> OrderbookSnapshot`;
+- `get_ticker_price()`.
+
+Торговые операции и LIVE execution не входят в этот шаг.
+

@@ -30,6 +30,7 @@ Matrix input is a typed evidence flow, not a flat signal vote. Raw primary cards
 
 Matrix technical specification: [`MATRIX_TZ.md`](MATRIX_TZ.md).
 Analyzer foundation specification: [`ANALYZER_FOUNDATION_TZ.md`](ANALYZER_FOUNDATION_TZ.md).
+Data foundation specification: [`DATA_FOUNDATION_TZ.md`](DATA_FOUNDATION_TZ.md).
 
 ## Safety and mode
 

@@ -66,6 +66,8 @@ AnalyzerContext
 - `feedback_depth`;
 - `parent_card_ids`.
 
+Рыночные данные должны попадать к анализатору через NOVA data contracts, прежде всего `MarketSnapshot`, а не через raw Binance JSON.
+
 RAW анализ:
 
 ```text
@@ -184,4 +186,3 @@ ForecastMatrixEngine Core
 ```
 
 Он будет читать raw primary packages/cards/contributions и строить primary/reconciled matrix layers.
-
