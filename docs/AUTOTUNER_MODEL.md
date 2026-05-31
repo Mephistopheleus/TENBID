@@ -9,8 +9,8 @@ It must not calculate scenario outcomes itself. It reads outcomes from real exec
 ## Evidence sources
 
 1. Real TESTNET outcomes from `ExchangeExecutor`.
-2. Shadow outcomes from online forbidden/alternative scenarios.
-3. Laboratory outcomes from experiments dispatched to `ScenarioEvaluator`.
+2. Shadow outcomes from online forbidden/alternative scenarios, especially whether a prohibition protected the system or was too strict.
+3. Laboratory outcomes from experiments dispatched to `ScenarioEvaluator`, including overtrusted and undertrusted evidence checks.
 4. Matrix prediction accuracy after price path resolution.
 5. Cost model errors: planned vs actual spread/slippage/commission.
 
@@ -64,6 +64,8 @@ StateSnapshot must be immutable, timestamped, stage-separated and logged before 
 ## Rule
 
 Autotuner changes active profile parameters, not secrets, keys, mode or safety locks.
+
+SafetyKernel boundaries are not autotuned. Shadow and Laboratory may produce evidence that a boundary was too strict or too loose, but changing the boundary is an explicit owner/policy action.
 
 ## Parameter registry
 

@@ -1,6 +1,9 @@
 """Universal scenario request contract.
 
-ScenarioEvaluator must not care whether the request comes from HOLD shadow, laboratory, matrix validation or a parameter sweep.
+ScenarioEvaluator must not care whether the request comes from HOLD shadow,
+forbidden-candidate shadow, laboratory, matrix validation or a parameter sweep.
+The source_type/tags carry the reason: especially whether we are checking that a
+blocked candidate was correctly blocked or was too strictly rejected.
 """
 
 from __future__ import annotations
@@ -27,7 +30,10 @@ class ScenarioRequest:
 class ScenarioSource:
     REAL_EXECUTION = "REAL_EXECUTION"
     HOLD_SHADOW = "HOLD_SHADOW"
+    SHADOW_FORBIDDEN = "SHADOW_FORBIDDEN"
+    SHADOW_ALTERNATIVE = "SHADOW_ALTERNATIVE"
     LAB_EXPERIMENT = "LAB_EXPERIMENT"
+    LAB_OVERTRUSTED_CHECK = "LAB_OVERTRUSTED_CHECK"
+    LAB_UNDERTRUSTED_CHECK = "LAB_UNDERTRUSTED_CHECK"
     MATRIX_VALIDATION = "MATRIX_VALIDATION"
     PARAMETER_SWEEP = "PARAMETER_SWEEP"
-

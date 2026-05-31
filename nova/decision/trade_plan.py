@@ -13,6 +13,14 @@ from typing import Dict, Optional
 from nova.core.ids import PLAN, new_id
 
 
+class PlanRole:
+    RUNTIME_PLACEHOLDER = "RUNTIME_PLACEHOLDER"
+    CALCULATED = "CALCULATED"
+    SHADOW_FORBIDDEN = "SHADOW_FORBIDDEN"
+    SHADOW_ALTERNATIVE = "SHADOW_ALTERNATIVE"
+    LAB_EXPERIMENT = "LAB_EXPERIMENT"
+
+
 @dataclass(frozen=True)
 class CostEstimate:
     commission_pct: float
@@ -24,10 +32,21 @@ class CostEstimate:
 
 @dataclass(frozen=True)
 class TradePlan:
+    """Canonical calculation envelope.
+
+    Shadow and Lab can use the same envelope, but must set plan_role/source tags
+    so counterfactual plans never look like runtime-approved plans.
+    """
+
     decision: str
     symbol: str
     reason: str
     profile_id: str
+    plan_role: str = PlanRole.RUNTIME_PLACEHOLDER
+    source_type: str = "RUNTIME"
+    parent_plan_id: Optional[str] = None
+    blocked_by: Optional[str] = None
+    block_reason: Optional[str] = None
     forecast_matrix_id: Optional[str] = None
     state_matrix_id: Optional[str] = None
     entry_price: Optional[float] = None

@@ -13,6 +13,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class SafetyPolicy:
+    """Owner-defined non-tunable boundary set.
+
+    Values here should come from immutable config/policy, not from Autotuner.
+    Shadow/Lab may evaluate whether a boundary was useful or too strict, but any
+    change to the boundary is an owner decision, not automatic tuning.
+    """
+
     allowed_symbol: str = "DOGEUSDT"
     allowed_mode: str = "TESTNET"
     live_requires_unlock: bool = True
