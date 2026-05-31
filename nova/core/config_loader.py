@@ -38,6 +38,8 @@ class RuntimeConfig:
     ws_loop_max_reconnects: int
     ws_loop_reconnect_backoff_sec: float
     native_tf_reconcile_enabled: bool
+    reconcile_enabled: bool
+    reconcile_candles: int
     orderbook_mode: str
     orderbook_limit: int
     orderbook_ttl_sec: float
@@ -84,6 +86,8 @@ class ConfigLoader:
             ws_loop_max_reconnects=base.getint("DATA", "ws_loop_max_reconnects", fallback=2),
             ws_loop_reconnect_backoff_sec=base.getfloat("DATA", "ws_loop_reconnect_backoff_sec", fallback=1.0),
             native_tf_reconcile_enabled=base.getboolean("DATA", "native_tf_reconcile_enabled", fallback=True),
+            reconcile_enabled=base.getboolean("DATA", "reconcile_enabled", fallback=True),
+            reconcile_candles=base.getint("DATA", "reconcile_candles", fallback=120),
             orderbook_mode=base.get("DATA", "orderbook_mode", fallback="on_demand_rate_limited"),
             orderbook_limit=base.getint("DATA", "orderbook_limit", fallback=20),
             orderbook_ttl_sec=base.getfloat("DATA", "orderbook_ttl_sec", fallback=10.0),

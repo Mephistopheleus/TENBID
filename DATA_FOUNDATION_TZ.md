@@ -133,7 +133,7 @@ REST warmup 300x5m
 → WS kline updates for closed base-TF candles
 → CandleCache update + synthetic TF rebuild
 → WS loop stops/reconnects by policy and logs aggregate lifecycle
-→ periodic REST reconciliation
+→ REST reconciliation refreshes recent base candles, rebuilds synthetic TF and emits a current MarketSnapshot
 ```
 
 Для старших TF можно дополнительно скачать native candles REST-ом за сопоставимый период и использовать их для reconciliation/quality, но synthetic TF остаются помеченными как производные.
@@ -205,5 +205,6 @@ Data Layer v0 содержит:
 - `SystemSupervisor` runtime transition: warmup lifecycle events → snapshot logging → `CycleRunner` receives current `MarketSnapshot`.
 - `WsKlineCacheUpdater`: public WS kline startup probe, closed base-TF candle cache update, synthetic TF rebuild, aggregate stream lifecycle logging.
 - `WsKlineStreamLoop`: bounded WS kline runtime slice with reconnect/backoff policy and aggregate lifecycle logging.
+- `MarketSnapshotRefreshService`: recent REST kline reconciliation over `CandleCache`, synthetic TF rebuild and refreshed `MarketSnapshot` for `CycleRunner`.
 
 Торговые операции и LIVE execution не входят в этот шаг.

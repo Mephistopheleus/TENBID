@@ -19,6 +19,11 @@ from nova.core.safety_kernel import SafetyKernel
 from nova.data.binance_rest import BinanceRestClient, BinanceRestConfig
 from nova.data.binance_ws import BinanceWsClient, BinanceWsConfig
 from nova.data.candle_cache import CandleCache
+from nova.data.snapshot_refresh import (
+    MarketSnapshotRefreshConfig,
+    MarketSnapshotRefreshResult,
+    MarketSnapshotRefreshService,
+)
 from nova.data.warmup import DataWarmupConfig, DataWarmupResult, MarketDataWarmupService
 from nova.data.ws_kline_updater import (
     WsKlineCacheUpdater,
@@ -76,6 +81,8 @@ class SystemSupervisor:
                     "ws_loop_max_runtime_sec": config.ws_loop_max_runtime_sec,
                     "ws_loop_max_reconnects": config.ws_loop_max_reconnects,
                     "native_tf_reconcile_enabled": config.native_tf_reconcile_enabled,
+                    "reconcile_enabled": config.reconcile_enabled,
+                    "reconcile_candles": config.reconcile_candles,
                     "orderbook_mode": config.orderbook_mode,
                 },
             ),
@@ -93,8 +100,10 @@ class SystemSupervisor:
 
         warmup_result = None
         warmup_error = None
+        current_market_snapshot = None
         try:
             warmup_result = self._warmup_market_data(config, run_id, event_log, history_db, candle_cache)
+            current_market_snapshot = warmup_result.snapshot
         except Exception as exc:  # noqa: BLE001 - safety path records the failure and continues to HOLD.
             warmup_error = str(exc)
             self._record(
@@ -115,13 +124,17 @@ class SystemSupervisor:
 
         if warmup_result and config.use_ws_klines and warmup_result.snapshot.quality.is_usable:
             self._run_ws_kline_runtime(config, run_id, event_log, history_db, candle_cache)
+        if warmup_result and config.reconcile_enabled and warmup_result.snapshot.quality.is_usable:
+            refresh_result = self._refresh_market_snapshot(config, run_id, event_log, history_db, candle_cache)
+            if refresh_result:
+                current_market_snapshot = refresh_result.snapshot
 
         plan = CycleRunner(
             run_id=run_id,
             config=config,
             event_log=event_log,
             history_db=history_db,
-            market_snapshot=warmup_result.snapshot if warmup_result else None,
+            market_snapshot=current_market_snapshot,
             warmup_error=warmup_error,
         ).run_once()
 
@@ -213,6 +226,113 @@ class SystemSupervisor:
                     "native_issue_codes": native_issue_codes,
                     "ws_klines_configured": config.use_ws_klines,
                     "ws_kline_mode": config.ws_kline_mode,
+                },
+            ),
+        )
+        return result
+
+    def _refresh_market_snapshot(
+        self,
+        config: RuntimeConfig,
+        run_id: str,
+        event_log: EventLog,
+        history_db: HistoryDB,
+        candle_cache: CandleCache,
+    ) -> MarketSnapshotRefreshResult | None:
+        self._record(
+            event_log,
+            history_db,
+            Event(
+                event_type=EventTypes.DATA_RECONCILIATION_STARTED,
+                run_id=run_id,
+                source="SystemSupervisor",
+                payload={
+                    "symbol": config.symbol,
+                    "base_timeframe": config.base_timeframe,
+                    "synthetic_timeframes": config.synthetic_timeframes,
+                    "reconcile_candles": config.reconcile_candles,
+                    "orderbook_mode": config.orderbook_mode,
+                },
+            ),
+        )
+
+        rest_client = BinanceRestClient(
+            BinanceRestConfig(
+                base_url=config.public_rest_base_url,
+                market_type=config.market_type,
+                timeout_sec=config.rest_timeout_sec,
+            )
+        )
+        try:
+            result = MarketSnapshotRefreshService(rest_client, cache=candle_cache).refresh(
+                MarketSnapshotRefreshConfig(
+                    symbol=config.symbol,
+                    base_timeframe=config.base_timeframe,
+                    synthetic_timeframes=config.synthetic_timeframes,
+                    reconcile_candles=config.reconcile_candles,
+                    snapshot_candle_limit=config.warmup_candles,
+                    fetch_orderbook=self._fetch_orderbook_during_refresh(config.orderbook_mode),
+                    orderbook_limit=config.orderbook_limit,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - reconciliation is a control layer, not a runtime kill switch.
+            self._record(
+                event_log,
+                history_db,
+                Event(
+                    event_type=EventTypes.DATA_RECONCILIATION_FAILED,
+                    run_id=run_id,
+                    source="SystemSupervisor",
+                    payload={
+                        "symbol": config.symbol,
+                        "base_timeframe": config.base_timeframe,
+                        "reconcile_candles": config.reconcile_candles,
+                        "error": str(exc),
+                    },
+                ),
+            )
+            return None
+
+        history_db.log_market_snapshot(result.snapshot)
+        candle_counts = {timeframe: series.count for timeframe, series in sorted(result.snapshot.candles.items())}
+        self._record(
+            event_log,
+            history_db,
+            Event(
+                event_type=EventTypes.MARKET_SNAPSHOT_CREATED,
+                run_id=run_id,
+                source="SystemSupervisor",
+                payload={
+                    "snapshot_id": result.snapshot.snapshot_id,
+                    "symbol": result.snapshot.primary_symbol,
+                    "base_timeframe": result.snapshot.base_timeframe,
+                    "quality_score": result.snapshot.quality.score,
+                    "quality_usable": result.snapshot.quality.is_usable,
+                    "candle_counts": candle_counts,
+                    "refresh_type": "rest_reconciliation",
+                },
+            ),
+        )
+        self._record(
+            event_log,
+            history_db,
+            Event(
+                event_type=EventTypes.DATA_RECONCILIATION_COMPLETED,
+                run_id=run_id,
+                source="SystemSupervisor",
+                payload={
+                    "snapshot_id": result.snapshot.snapshot_id,
+                    "symbol": result.snapshot.primary_symbol,
+                    "base_timeframe": result.snapshot.base_timeframe,
+                    "quality_score": result.snapshot.quality.score,
+                    "quality_usable": result.snapshot.quality.is_usable,
+                    "candle_counts": candle_counts,
+                    "reconciled_candle_count": result.reconciled_candle_count,
+                    "matched_candle_count": result.matched_candle_count,
+                    "filled_candle_count": result.filled_candle_count,
+                    "replaced_candle_count": result.replaced_candle_count,
+                    "mismatch_open_times": result.mismatch_open_times,
+                    "issue_codes": result.snapshot.quality.issue_codes,
                 },
             ),
         )
@@ -415,6 +535,10 @@ class SystemSupervisor:
     @staticmethod
     def _fetch_orderbook_during_warmup(orderbook_mode: str) -> bool:
         return orderbook_mode.lower() in {"warmup", "startup", "always"}
+
+    @staticmethod
+    def _fetch_orderbook_during_refresh(orderbook_mode: str) -> bool:
+        return orderbook_mode.lower() in {"refresh", "reconciliation", "always"}
 
     @staticmethod
     def _record(event_log: EventLog, history_db: HistoryDB, event: Event) -> None:
