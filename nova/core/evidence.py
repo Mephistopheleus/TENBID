@@ -34,6 +34,12 @@ class EvidenceTier:
     DERIVED = "DERIVED"
 
 
+class MatrixLayer:
+    PRIMARY = "PRIMARY"
+    RECONCILED = "RECONCILED"
+    VALIDATION = "VALIDATION"
+
+
 class MatrixFieldRole:
     CORE = "CORE"
     HALO = "HALO"
@@ -49,4 +55,3 @@ class MatrixZoneStatus:
     WEAKENED = "WEAKENED"
     INVALIDATED = "INVALIDATED"
     EXPIRED = "EXPIRED"
-

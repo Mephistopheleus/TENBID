@@ -123,6 +123,18 @@ Matrix-assisted cards/contributions должны иметь:
 
 Они могут менять metadata, trust, conflict, recheck и decision context, но не первичную статистику и не primary field той же матрицы.
 
+## 6.1 Primary и Reconciled слои
+
+Кроссвалидация не выкидывается из матрицы. Она живёт в отдельном/параллельном слое.
+
+Минимальные слои:
+
+- `PrimaryMatrix` — чистое первичное поле из `RAW / PRIMARY / feedback_depth = 0` evidence.
+- `ValidationLayer` — validation/revision/recheck карточки, которые комментируют, уточняют или требуют перепроверки зон.
+- `ReconciledMatrix` — рабочее уточнённое поле для DecisionEngine, построенное из primary field плюс validation/revision metadata без загрязнения primary statistics.
+
+DecisionEngine может использовать ReconciledMatrix как более точную рабочую картину. Autotuner при этом обязан считать primary accuracy и matrix-assisted accuracy отдельно.
+
 ## 7. Evidence stages и tiers
 
 Stages:
@@ -244,6 +256,11 @@ Autotuner обязан считать отдельно:
 - `nova/analysis/models.py` — `AnalysisResult` и `StateContribution` с stage/tier/feedback lineage;
 - `nova/matrix/models.py` — `ForecastContribution`, `MatrixZone`, `ForecastMatrix`, `StateMatrix` с matrix/card lineage;
 - `nova/matrix/validators.py` — защита primary matrix от feedback-derived evidence;
+- `nova/analyzers/contracts.py` — manifest/context/package/base analyzer contracts;
+- `nova/analyzers/registry.py` — явный реестр анализаторов;
+- `nova/analyzers/runner.py` — raw/validation runner со stage separation;
+- `nova/analyzers/fixtures.py` — fixture analyzer для проверки трубы без реальных анализаторов;
+- `nova/core/history_db.py` — расширяемая SQLite память для cards/contributions/matrices;
 - `docs/MATRIX_MODEL.md` — концептуальная модель;
 - `docs/AUTOTUNER_MODEL.md` — no-echo learning rule.
 
@@ -260,4 +277,3 @@ Implement ForecastMatrixEngine Core
 ```text
 raw primary evidence → sparse islands → core/halo/bridge/tension → state → decision context
 ```
-

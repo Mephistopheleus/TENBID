@@ -1,6 +1,5 @@
-"""Analyzer package placeholder.
+"""Analyzer foundation.
 
-Analyzers are intentionally not implemented yet. Future analyzers must output NOVA contracts:
-AnalysisResult, ForecastContribution and/or StateContribution.
+Real trading analyzers are intentionally not implemented yet. The foundation is
+ready: future analyzers register a manifest and return AnalysisPackage objects.
 """
-

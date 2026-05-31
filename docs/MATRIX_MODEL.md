@@ -59,6 +59,8 @@ Matrix-assisted validation or revision cards may update zone metadata, trust, co
 
 Hard rule: **a primary matrix must not believe its own reflection within the same cycle**.
 
+Cross-validated results are still part of the matrix system. They live in a validation/reconciliation layer: useful for DecisionEngine and assisted accuracy, but separated from raw primary statistics.
+
 ## Universal analyzer path
 
 Analyzers may produce arbitrary module-specific payloads, but NOVA only reasons over standardized outputs:

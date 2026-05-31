@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from nova.analysis.models import EvidenceRef
-from nova.core.evidence import CardStage, EvidenceTier, MatrixFieldRole, MatrixZoneStatus
-from nova.core.ids import FORECAST, MATRIX, new_id
+from nova.core.evidence import CardStage, EvidenceTier, MatrixFieldRole, MatrixLayer, MatrixZoneStatus
+from nova.core.ids import FORECAST, MATRIX, MATRIX_ZONE, new_id
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,7 @@ class MatrixZone:
     source_card_ids: List[str] = field(default_factory=list)
     recheck_reasons: List[str] = field(default_factory=list)
     payload: Dict[str, object] = field(default_factory=dict)
+    zone_id: str = field(default_factory=lambda: new_id(MATRIX_ZONE))
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class ForecastMatrix:
     contributor_ids: List[str]
     source_card_ids: List[str] = field(default_factory=list)
     primary_only: bool = True
+    matrix_layer: str = MatrixLayer.PRIMARY
     matrix_id: str = field(default_factory=lambda: new_id(MATRIX))
 
 
