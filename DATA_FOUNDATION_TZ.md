@@ -127,6 +127,7 @@ REST warmup 300x5m
 → CandleCache
 → SyntheticTimeframeBuilder: 10m/15m/30m/1h/4h/8h/12h
 → MarketSnapshot
+→ SystemSupervisor logs snapshot and passes it to CycleRunner
 → WS kline updates
 → CandleCache update
 → periodic REST reconciliation
@@ -154,6 +155,8 @@ REST warmup 300x5m
 
 Data warmup должен писать события уровня процесса и сохранять snapshot metadata/payload. Высокочастотные WS ticks не должны писаться в EventLog по одному событию; они идут через cache, а в журнал попадают агрегированные состояния/ошибки/reconnect events.
 
+Runtime transition rule: после успешного REST warmup `SystemSupervisor` сохраняет `MarketSnapshot`, пишет `DATA_WARMUP_COMPLETED`/`MARKET_SNAPSHOT_CREATED` и запускает цикл уже со статусом `market_snapshot_ready`. Если warmup падает, цикл остаётся безопасным `HOLD`, а анализаторы/Matrix не стартуют.
+
 ## 8. Synthetic TF rule
 
 Синтетические таймфреймы являются производными от base timeframe. Они полезны, но не являются независимыми evidence.
@@ -168,10 +171,10 @@ parent/base series lineage в payload
 
 ## 9. Следующий шаг
 
-После Data Layer v0:
+После Data Warmup runtime integration:
 
 ```text
-Matrix Core + first MarketStructureAnalyzer
+WS kline live updater → Matrix Core + first MarketStructureAnalyzer
 ```
 
 Data Layer v0 содержит:
@@ -183,5 +186,6 @@ Data Layer v0 содержит:
 - `TimeframeReconciler`;
 - `DataScheduler`.
 - `MarketDataWarmupService`: REST warmup → cache → synthetic TF → native higher-TF reconciliation → MarketSnapshot.
+- `SystemSupervisor` runtime transition: warmup lifecycle events → snapshot logging → `CycleRunner` receives current `MarketSnapshot`.
 
 Торговые операции и LIVE execution не входят в этот шаг.
