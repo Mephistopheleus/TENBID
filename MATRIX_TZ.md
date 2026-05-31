@@ -276,6 +276,54 @@ Autotuner не должен исправлять ошибочную сигнал
 
 Synthetic TF должен иметь `dependency_group = ohlcv_resampled`. Native TF того же рынка должен рассматриваться как same-market aggregate/corroboration, а не внешний независимый источник. Конфликт между TF — это отдельный context/tension объект, а не арифметическая сумма сигналов.
 
+## 12.2 ScaleField / MultiScaleTopology
+
+Идея будущего слоя: NOVA может описывать рынок не как набор ступенчатых TF, а как разреженную multi-scale topology:
+
+```text
+X = time
+Z = price
+Y = scale / timeframe / observation resolution
+```
+
+Это не dense 3D grid и не multi-TF stack. Это sparse topology над зонами, где есть evidence. Крупные scale-деформации старших TF могут создавать контекстные "складки", которые плавно влияют на интерпретацию локальных 5m структур: continuity, tension, fracture, compression, containment, divergence, recheck need.
+
+Правильный поток:
+
+```text
+ForecastMatrix sparse price-time zones
+→ ScaleField / MultiScaleTopology relations
+→ StateMatrix / DecisionContext constraints
+→ TradeCalculator / RiskManager
+```
+
+ScaleField не принимает торговое решение и не создаёт сигнал. Он описывает отношения между масштабами:
+
+- `CONTINUITY` — локальная структура продолжает крупную;
+- `TENSION` — локальная структура входит в крупную область риска/конфликта;
+- `FRACTURE` — локальная структура начинает ломать границу старшего масштаба;
+- `COMPRESSION` — несколько масштабов сходятся в узкой price-time области;
+- `CONTAINMENT` — младшая зона находится внутри крупной зоны;
+- `DIVERGENCE` — масштабы описывают несовместимые феномены;
+- `RECHECK_NEEDED` — отношение масштабов требует перепроверки.
+
+## 12.3 Multi-field topology rule
+
+Не каждый анализатор должен получать своё плотное "полотно". Поле строится только там, где у данных есть естественная геометрия и оно даёт новые отношения, а не дублирует уже существующий price-time слой.
+
+Базовая ось NOVA остаётся price-time, потому что TradePlan в итоге рассчитывает цену, время, риск, costs и допустимость. Остальные поля являются контекстными/ограничительными слоями, которые проецируются на price-time zones через lineage:
+
+- `VolumeField` — volume/value/liquidity distribution по price-time, если данные достаточны;
+- `LiquidityField` — orderbook/depth walls/imbalance как короткоживущий контекст, не долгий прогноз;
+- `StructureField` — fractal/SR/pattern zones как structural constraints;
+- `TrendRegimeField` — состояние наклона/режима/волатильности, чаще StateMatrix/context, а не отдельная dense surface;
+- `DerivativesField` — funding/OI/long-short pressure как state/context layer;
+- `News/EventField` — событийный контекст с decay и validity, не price grid.
+
+Эти поля не конкурируют и не голосуют. Они создают relations, constraints, quality modifiers, recheck intents и ambiguity flags. Если анализатор не имеет естественной field geometry, он отдаёт карточки/StateContribution/ForecastContribution без искусственного полотна.
+
+Autotuner может настраивать параметры relation scoring и penalties между полями, но не превращает поля в агрегатор сигналов.
+
 ## 13. Что не делать
 
 Запрещено для Matrix Core:
@@ -284,6 +332,8 @@ Synthetic TF должен иметь `dependency_group = ohlcv_resampled`. Nativ
 - превращать таймфреймы в голоса или score counters;
 - использовать лексику и механику сигналов buy/sell;
 - строить `+1 long / -1 short` агрегацию;
+- строить плотное полотно для каждого анализатора только ради визуальной симметрии;
+- смешивать price/volume/liquidity/trend/fractal fields без typed relations и lineage;
 - строить global blur по всей сетке;
 - заполнять пустые области вероятностью;
 - считать validation/revision первичным evidence;

@@ -25,6 +25,8 @@ AnalyzerContext
 
 Пакет не должен содержать плоский signal score вида `+1 long`, `-1 short`, `BUY`, `SELL`. Если старый или стандартный анализатор концептуально похож на сигнальный, адаптер NOVA обязан перевести его результат в карточки/контекст/ограничения без переноса сигнальной механики.
 
+Не каждый анализатор обязан строить собственное поле/полотно. Field-like output разрешён только если у феномена есть естественная геометрия: price-time, price-volume, liquidity-depth, structure zones, regime surface. Иначе анализатор отдаёт cards/state/constraints. Поля разных типов соединяются позже через typed relations и lineage, а не через общий score.
+
 ## 2. AnalyzerManifest
 
 `AnalyzerManifest` — паспорт анализатора.

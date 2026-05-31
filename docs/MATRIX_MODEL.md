@@ -117,6 +117,38 @@ Synthetic 10m/15m/30m/1h built from 5m are scale/context layers, not independent
 
 Native higher-timeframe candles from the same market are useful for reconciliation, quality checks and corroboration, but they are still same-market aggregates. They must not be treated as fully independent confirmations merely because they were downloaded as native Binance intervals.
 
+## Multi-scale topology
+
+Future NOVA matrix layers may model scale as an axis, not as stepped timeframe rows:
+
+```text
+time x price x scale
+```
+
+This must remain sparse. The goal is not a dense 3D heatmap; the goal is typed cross-scale relations between evidence-backed zones:
+
+- `CONTINUITY`: lower-scale structure continues higher-scale context.
+- `TENSION`: lower-scale structure moves into higher-scale risk or conflict.
+- `FRACTURE`: lower-scale structure starts breaking a higher-scale boundary.
+- `COMPRESSION`: multiple scales converge in a narrow price-time area.
+- `CONTAINMENT`: a local zone sits inside a larger context zone.
+- `DIVERGENCE`: scales describe incompatible phenomena.
+
+These relations produce context, constraints, recheck needs and ambiguity flags. They do not produce trade decisions.
+
+## Multi-field topology
+
+Price-time is the base matrix because TradePlans ultimately need price, time, risk, costs and invalidation. Other analyzers may produce field-like context only when the data has natural geometry:
+
+- volume/value distribution fields;
+- short-lived liquidity/orderbook fields;
+- fractal/structure fields;
+- trend/regime state fields;
+- derivatives pressure fields;
+- news/event decay fields.
+
+NOVA must not create a dense surface for every analyzer by default. Non-geometric analyzers return cards, state contributions or constraints. Field layers interact through typed relations and lineage, not voting or flat score aggregation.
+
 ## Orderbook role
 
 Orderbook is a short-lived liquidity/SR contributor. It is rate-limited and called on demand or no more often than policy allows.
