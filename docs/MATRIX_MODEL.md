@@ -76,6 +76,8 @@ Analyzers may produce arbitrary module-specific payloads, but NOVA only reasons 
 
 This allows future analyzers to add new data without changing Matrix internals.
 
+Runtime analyzers receive the refreshed `MarketSnapshot` object plus lineage IDs through `AnalyzerContext`. They must not call Binance directly and must not output trade instructions.
+
 Analyzers may build whole decks, not just one forecast. A deck can contain raw evidence, uncertainty notes, validation cards, revision cards, invalidation context and recheck requests. The matrix reads those cards according to their type and rights; it does not flatten the deck into one score.
 
 ## StateMatrix
@@ -175,3 +177,5 @@ Orderbook is a short-lived liquidity/SR contributor. It is rate-limited and call
 All ForecastMatrix zones store contributor IDs. Contributions reference `analysis_result_id`. TradePlans reference matrix IDs. Outcomes reference TradePlan or Scenario IDs. Autotuner learns by walking this lineage backward.
 
 Primary statistics must be computed from raw primary evidence only. Assisted/revised evidence is tracked separately so Autotuner can compare raw accuracy and matrix-assisted accuracy without echo pollution.
+
+Current runtime implementation builds a minimal sparse primary matrix from raw primary contributions. It preserves empty space, logs lineage, and remains upstream of any future DecisionEngine / TradeCalculator / RiskManager path.

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 from nova.analysis.models import AnalysisResult, StateContribution
 from nova.cards.models import CardDeck
 from nova.core.evidence import CardStage
+from nova.data.models import MarketSnapshot
 from nova.matrix.models import ForecastContribution
 
 
@@ -40,6 +41,7 @@ class AnalyzerContext:
     timeframe: str
     profile_id: str
     parameters: Dict[str, Any] = field(default_factory=dict)
+    market_snapshot: Optional[MarketSnapshot] = None
     market_snapshot_id: Optional[str] = None
     available_data_ids: List[str] = field(default_factory=list)
     stage: str = CardStage.RAW
@@ -69,4 +71,3 @@ class BaseAnalyzer(Protocol):
 
     def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
         """Return a standardized package for the requested analysis stage."""
-

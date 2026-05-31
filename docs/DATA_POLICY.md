@@ -16,6 +16,8 @@ Strategy thinks on 5m+ context. Microdata is used for confirmation and outcome r
 
 Analyzers must read from local caches and snapshots, not call Binance directly.
 
+Runtime passes the refreshed `MarketSnapshot` into `AnalyzerContext`; analyzers also receive snapshot/series IDs for lineage. Analyzer output is evidence/context only, not buy/sell/stop instructions.
+
 ## REST/WS reconciliation
 
 Runtime uses REST warmup first, then WS closed-kline updates for live cache movement. Before `CycleRunner`, recent base-TF candles are fetched again via REST, reconciled into `CandleCache`, synthetic TF are rebuilt, and a refreshed `MarketSnapshot` is logged. REST remains the control/backfill layer; WS is not the only source of truth.

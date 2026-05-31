@@ -1,5 +1,5 @@
 """Analyzer foundation.
 
-Real trading analyzers are intentionally not implemented yet. The foundation is
-ready: future analyzers register a manifest and return AnalysisPackage objects.
+Analyzers read NOVA contracts such as MarketSnapshot and return AnalysisPackage
+objects. They do not own trade decisions.
 """

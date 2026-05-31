@@ -67,6 +67,7 @@ AnalyzerContext
 - `timeframe`;
 - `profile_id`;
 - `parameters`;
+- `market_snapshot`;
 - `market_snapshot_id`;
 - `available_data_ids`;
 - `stage`;
@@ -74,7 +75,7 @@ AnalyzerContext
 - `feedback_depth`;
 - `parent_card_ids`.
 
-Рыночные данные должны попадать к анализатору через NOVA data contracts, прежде всего `MarketSnapshot`, а не через raw Binance JSON.
+Рыночные данные должны попадать к анализатору через NOVA data contracts, прежде всего `MarketSnapshot`, а не через raw Binance JSON. `market_snapshot_id` и `available_data_ids` фиксируют lineage, а объект `market_snapshot` является read-only входом анализа в рамках цикла.
 
 RAW анализ:
 
@@ -163,7 +164,7 @@ AnalyzerRunner
 → MatrixValidator
 ```
 
-Реальные анализаторы будут добавляться позже.
+Первый runtime analyzer — `MarketStructureAnalyzer`. Он читает refreshed `MarketSnapshot`, описывает bounded recent-range context и отдаёт карточки/вклад в Matrix без buy/sell/stop решений.
 
 ## 9. Расширяемая HistoryDB
 
@@ -197,3 +198,5 @@ ForecastMatrixEngine Core
 ```
 
 Он будет читать raw primary packages/cards/contributions и строить primary/reconciled matrix layers.
+
+Текущая реализация уже строит минимальный sparse primary layer: один evidence-backed zone per raw primary contribution, без dense grid и без торгового решения.

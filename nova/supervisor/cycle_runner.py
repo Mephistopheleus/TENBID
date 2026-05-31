@@ -7,6 +7,12 @@ connected.
 
 from __future__ import annotations
 
+from typing import Any, Dict, List
+
+from nova.analyzers.contracts import AnalysisPackage
+from nova.analyzers.market_structure import MarketStructureAnalyzer
+from nova.analyzers.registry import AnalyzerRegistry
+from nova.analyzers.runner import AnalyzerRunner
 from nova.core.config_loader import RuntimeConfig
 from nova.core.event_log import EventLog
 from nova.core.events import Event, EventTypes
@@ -15,6 +21,8 @@ from nova.core.ids import CYCLE, new_id
 from nova.core.state_snapshot import StateSnapshot, StateSnapshotStage
 from nova.data.models import MarketSnapshot
 from nova.decision.trade_plan import TradePlan
+from nova.matrix.forecast_matrix import ForecastMatrixEngine
+from nova.matrix.models import ForecastMatrix
 
 
 class CycleRunner:
@@ -72,7 +80,11 @@ class CycleRunner:
             )
         )
 
-        reason, dynamics_summary = self._hold_reason()
+        analysis_summary: Dict[str, Any] = {"status": "not_started"}
+        if self.market_snapshot is not None and self.market_snapshot.quality.is_usable:
+            analysis_summary = self._run_pre_decision_analysis(cycle_id)
+
+        reason, dynamics_summary = self._hold_reason(analysis_summary)
         plan = TradePlan(
             decision="HOLD",
             symbol=self.config.symbol,
@@ -140,7 +152,103 @@ class CycleRunner:
             },
         )
 
-    def _hold_reason(self) -> tuple[str, dict[str, object]]:
+    def _run_pre_decision_analysis(self, cycle_id: str) -> Dict[str, Any]:
+        registry = AnalyzerRegistry([MarketStructureAnalyzer()])
+        analyzer_names = sorted(registry.manifests().keys())
+        self._record(
+            Event(
+                event_type=EventTypes.ANALYSIS_PASS_STARTED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="CycleRunner",
+                payload={
+                    "stage": "RAW",
+                    "symbol": self.config.symbol,
+                    "timeframe": self.config.base_timeframe,
+                    "market_snapshot_id": self.market_snapshot.snapshot_id if self.market_snapshot else None,
+                    "analyzers": analyzer_names,
+                },
+            )
+        )
+        try:
+            packages = AnalyzerRunner(registry).run_raw_pass(
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                symbol=self.config.symbol,
+                timeframe=self.config.base_timeframe,
+                profile_id=self.config.profile.profile_id,
+                market_snapshot=self.market_snapshot,
+            )
+            for package in packages:
+                self.history_db.log_analysis_package(package)
+            matrix = self._build_primary_matrix(cycle_id, packages)
+        except Exception as exc:  # noqa: BLE001 - analyzer failure must not break the safe HOLD cycle.
+            self._record(
+                Event(
+                    event_type=EventTypes.ANALYSIS_PASS_FAILED,
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    source="CycleRunner",
+                    payload={
+                        "stage": "RAW",
+                        "symbol": self.config.symbol,
+                        "timeframe": self.config.base_timeframe,
+                        "analyzers": analyzer_names,
+                        "error": str(exc),
+                    },
+                )
+            )
+            return {"status": "analysis_failed", "analyzers": analyzer_names, "error": str(exc)}
+
+        summary = {
+            "status": "analysis_ready",
+            "analyzers": analyzer_names,
+            "analysis_package_count": len(packages),
+            "forecast_contribution_count": sum(len(package.forecast_contributions) for package in packages),
+            "state_contribution_count": sum(len(package.state_contributions) for package in packages),
+            "primary_matrix_id": matrix.matrix_id,
+            "primary_zone_count": len(matrix.zones),
+        }
+        self._record(
+            Event(
+                event_type=EventTypes.ANALYSIS_PASS_COMPLETED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="CycleRunner",
+                payload={"stage": "RAW", "symbol": self.config.symbol, **summary},
+            )
+        )
+        return summary
+
+    def _build_primary_matrix(self, cycle_id: str, packages: List[AnalysisPackage]) -> ForecastMatrix:
+        contributions = [
+            contribution
+            for package in packages
+            for contribution in package.forecast_contributions
+        ]
+        matrix = ForecastMatrixEngine().build(cycle_id=cycle_id, symbol=self.config.symbol, contributions=contributions)
+        self.history_db.log_forecast_matrix(matrix)
+        self._record(
+            Event(
+                event_type=EventTypes.FORECAST_MATRIX_BUILT,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="CycleRunner",
+                payload={
+                    "matrix_id": matrix.matrix_id,
+                    "symbol": matrix.symbol,
+                    "matrix_layer": matrix.matrix_layer,
+                    "primary_only": matrix.primary_only,
+                    "zone_count": len(matrix.zones),
+                    "contributor_count": len(matrix.contributor_ids),
+                    "source_card_count": len(matrix.source_card_ids),
+                    "not_trade_decision": True,
+                },
+            )
+        )
+        return matrix
+
+    def _hold_reason(self, analysis_summary: Dict[str, Any]) -> tuple[str, dict[str, object]]:
         if self.market_snapshot is None:
             reason = "Data warmup failed; analyzers and matrix were not started"
             summary: dict[str, object] = {"status": "data_warmup_failed"}
@@ -165,13 +273,14 @@ class CycleRunner:
             )
 
         return (
-            "Market snapshot ready; analyzers and matrix are not connected yet",
+            "Market snapshot analyzed; matrix context ready; trade decision path is not connected yet",
             {
-                "status": "market_snapshot_ready",
+                "status": "analysis_and_matrix_ready",
                 "snapshot_id": self.market_snapshot.snapshot_id,
                 "quality_score": self.market_snapshot.quality.score,
                 "quality_usable": self.market_snapshot.quality.is_usable,
                 "candle_counts": candle_counts,
+                "analysis_summary": analysis_summary,
             },
         )
 
