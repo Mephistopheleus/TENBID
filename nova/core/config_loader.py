@@ -25,6 +25,13 @@ class RuntimeConfig:
     base_timeframe: str
     synthetic_timeframes: list[str]
     warmup_candles: int
+    market_type: str
+    public_rest_base_url: str
+    public_ws_base_url: str
+    rest_timeout_sec: float
+    orderbook_limit: int
+    orderbook_ttl_sec: float
+    reconcile_interval_sec: float
     event_log_path: Path
     sqlite_path: Path
     secrets: configparser.ConfigParser
@@ -54,6 +61,13 @@ class ConfigLoader:
             base_timeframe=base.get("GENERAL", "base_timeframe", fallback="5m"),
             synthetic_timeframes=self._split_csv(base.get("GENERAL", "synthetic_timeframes", fallback="")),
             warmup_candles=base.getint("DATA", "warmup_candles", fallback=300),
+            market_type=base.get("DATA", "market_type", fallback="USD_M_FUTURES"),
+            public_rest_base_url=base.get("DATA", "public_rest_base_url", fallback="https://testnet.binancefuture.com"),
+            public_ws_base_url=base.get("DATA", "public_ws_base_url", fallback="wss://stream.binancefuture.com/ws"),
+            rest_timeout_sec=base.getfloat("DATA", "rest_timeout_sec", fallback=10.0),
+            orderbook_limit=base.getint("DATA", "orderbook_limit", fallback=20),
+            orderbook_ttl_sec=base.getfloat("DATA", "orderbook_ttl_sec", fallback=10.0),
+            reconcile_interval_sec=base.getfloat("DATA", "reconcile_interval_sec", fallback=60.0),
             event_log_path=self.root_dir / base.get("LOGGING", "event_log_path", fallback="logs/events.jsonl"),
             sqlite_path=self.root_dir / base.get("LOGGING", "sqlite_path", fallback="nova_history.db"),
             secrets=secrets,
@@ -79,4 +93,3 @@ class ConfigLoader:
     @staticmethod
     def _split_csv(value: str) -> list[str]:
         return [item.strip() for item in value.split(",") if item.strip()]
-

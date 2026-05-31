@@ -118,7 +118,21 @@ UNKNOWN
 4. WS live updates;
 5. analyzers.
 
-REST нужен первым для warmup/backfill/reconciliation. WS подключается позже и не должен становиться единственным источником истины.
+REST нужен для warmup/backfill/reconciliation. WS может использовать публичный stream API для live updates, но не должен становиться единственным источником истины.
+
+Рабочий поток:
+
+```text
+REST warmup 300x5m
+→ CandleCache
+→ SyntheticTimeframeBuilder: 10m/15m/30m/1h/4h/8h/12h
+→ MarketSnapshot
+→ WS kline updates
+→ CandleCache update
+→ periodic REST reconciliation
+```
+
+Для старших TF можно дополнительно скачать native candles REST-ом за сопоставимый период и использовать их для reconciliation/quality, но synthetic TF остаются помеченными как производные.
 
 ## 8. Synthetic TF rule
 
@@ -134,19 +148,19 @@ parent/base series lineage в payload
 
 ## 9. Следующий шаг
 
-После Data Foundation:
+После Data Layer v0:
 
 ```text
-Binance REST read-only adapter
+Matrix Core + first MarketStructureAnalyzer
 ```
 
-Минимум:
+Data Layer v0 содержит:
 
-- `ping()`;
-- `server_time()`;
-- `get_klines() -> CandleSeries`;
-- `get_orderbook() -> OrderbookSnapshot`;
-- `get_ticker_price()`.
+- `BinanceRestClient`: `ping`, `server_time`, `get_klines`, `get_orderbook`, `get_ticker_price`;
+- `BinanceWsClient`: public kline stream URL builder and kline parser;
+- `CandleCache`;
+- `SyntheticTimeframeBuilder`;
+- `TimeframeReconciler`;
+- `DataScheduler`.
 
 Торговые операции и LIVE execution не входят в этот шаг.
-
