@@ -15,6 +15,7 @@ from nova.analysis.models import AnalysisResult, StateContribution
 from nova.analyzers.contracts import AnalysisPackage
 from nova.cards.models import CardDeck, EvidenceCard
 from nova.core.events import Event
+from nova.core.state_snapshot import StateSnapshot
 from nova.data.models import MarketSnapshot
 from nova.decision.trade_plan import TradePlan
 from nova.matrix.models import ForecastContribution, ForecastMatrix, MatrixZone, StateMatrix
@@ -214,8 +215,34 @@ class HistoryDB:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS state_snapshots (
+                    state_snapshot_id TEXT PRIMARY KEY,
+                    run_id TEXT,
+                    cycle_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    market_snapshot_id TEXT,
+                    training_role TEXT NOT NULL,
+                    data_quality REAL NOT NULL,
+                    data_usable INTEGER NOT NULL,
+                    conflict_score REAL NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL
+                )
+                """
+            )
+            self._ensure_column(conn, "state_snapshots", "run_id", "TEXT")
             for statement in self._index_statements():
                 conn.execute(statement)
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str) -> None:
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})")}
+        if column_name not in columns:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
     @staticmethod
     def _index_statements() -> Iterable[str]:
@@ -226,6 +253,8 @@ class HistoryDB:
             "CREATE INDEX IF NOT EXISTS idx_forecast_source_analysis ON forecast_contributions(source_analysis_result_id)",
             "CREATE INDEX IF NOT EXISTS idx_matrix_zones_matrix ON matrix_zones(matrix_id)",
             "CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(primary_symbol)",
+            "CREATE INDEX IF NOT EXISTS idx_state_snapshots_run ON state_snapshots(run_id)",
+            "CREATE INDEX IF NOT EXISTS idx_state_snapshots_cycle ON state_snapshots(cycle_id)",
         ]
 
     def log_event(self, event: Event) -> None:
@@ -285,6 +314,34 @@ class HistoryDB:
                     snapshot.base_timeframe,
                     snapshot.quality.score,
                     int(snapshot.quality.is_usable),
+                    self._json(payload),
+                    SCHEMA_VERSION,
+                ),
+            )
+
+    def log_state_snapshot(self, snapshot: StateSnapshot) -> None:
+        payload = asdict(snapshot)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO state_snapshots (
+                    state_snapshot_id, run_id, cycle_id, symbol, stage, created_at,
+                    market_snapshot_id, training_role, data_quality, data_usable,
+                    conflict_score, payload_json, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.state_snapshot_id,
+                    snapshot.run_id,
+                    snapshot.cycle_id,
+                    snapshot.symbol,
+                    snapshot.stage,
+                    snapshot.created_at,
+                    snapshot.market_snapshot_id,
+                    snapshot.training_role,
+                    snapshot.data_quality,
+                    int(snapshot.data_usable),
+                    snapshot.conflict_score,
                     self._json(payload),
                     SCHEMA_VERSION,
                 ),

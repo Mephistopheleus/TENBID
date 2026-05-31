@@ -261,6 +261,33 @@ Autotuner обязан считать отдельно:
 
 Autotuner не должен исправлять ошибочную сигнальную архитектуру. Он может настраивать параметры интерпретации, decay, penalties, sensitivity, risk/quality thresholds, но не превращает evidence в голоса и не должен учиться на модели `TF +1 / TF -1`. Если базовая структура неправильно смешивает dependent evidence, Autotuner только оптимизирует ошибку.
 
+## 12.0 StateSnapshot learning context rule
+
+`StateSnapshot` — это immutable срез условий в момент цикла, а не label и не evidence accuracy.
+
+Он нужен Autotuner/Shadow/Laboratory, чтобы понимать, в каких условиях возникли evidence, matrix context, TradePlan или отказ от сделки:
+
+- data quality/freshness/gaps;
+- volatility/regime/liquidity state;
+- scale/cross-field tension;
+- conflict score;
+- recheck flags;
+- stage и lineage.
+
+Обязательное разделение:
+
+```text
+RAW evidence snapshot
+StateSnapshot context_at_decision_time
+Decision / TradePlan snapshot
+Outcome snapshot
+Autotune target
+```
+
+StateSnapshot должен быть записан до outcome и иметь stage (`PRE_ANALYSIS`, `POST_MATRIX`, `PRE_DECISION`, `POST_DECISION`, `OUTCOME_CONTEXT`). Нельзя пересчитывать прошлое состояние после результата и подставлять его как будто оно было известно тогда — это leakage.
+
+StateSnapshot помогает Autotuner настраивать условные penalties/thresholds/decay, но не смешивается с raw primary accuracy и не становится торговым сигналом.
+
 ## 12.1 Timeframe role rule
 
 Таймфрейм — это масштабная линза (`scale/context layer`), а не независимый участник голосования.
@@ -354,6 +381,7 @@ Autotuner может настраивать параметры relation scoring 
 - `nova/analyzers/registry.py` — явный реестр анализаторов;
 - `nova/analyzers/runner.py` — raw/validation runner со stage separation;
 - `nova/analyzers/fixtures.py` — fixture analyzer для проверки трубы без реальных анализаторов;
+- `nova/core/state_snapshot.py` — immutable runtime state context для Shadow/Autotuner без label leakage;
 - `nova/core/history_db.py` — расширяемая SQLite память для cards/contributions/matrices;
 - `docs/MATRIX_MODEL.md` — концептуальная модель;
 - `docs/AUTOTUNER_MODEL.md` — no-echo learning rule.

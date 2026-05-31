@@ -149,6 +149,23 @@ Price-time is the base matrix because TradePlans ultimately need price, time, ri
 
 NOVA must not create a dense surface for every analyzer by default. Non-geometric analyzers return cards, state contributions or constraints. Field layers interact through typed relations and lineage, not voting or flat score aggregation.
 
+## StateSnapshot learning context
+
+StateSnapshot records the runtime conditions around analysis, matrix and decision stages. It is training context, not an outcome label and not primary evidence.
+
+Valid uses:
+
+- explain when evidence worked or failed;
+- tune conditional thresholds, decay and penalties;
+- preserve data quality, liquidity, volatility, scale and conflict context at decision time;
+- protect Shadow and Autotuner from hindsight leakage.
+
+Invalid uses:
+
+- merging state context into raw primary evidence accuracy;
+- recomputing past state after outcome and treating it as known at decision time;
+- turning state into a trade signal.
+
 ## Orderbook role
 
 Orderbook is a short-lived liquidity/SR contributor. It is rate-limited and called on demand or no more often than policy allows.

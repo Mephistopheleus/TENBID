@@ -12,6 +12,7 @@ from nova.core.event_log import EventLog
 from nova.core.events import Event, EventTypes
 from nova.core.history_db import HistoryDB
 from nova.core.ids import CYCLE, new_id
+from nova.core.state_snapshot import StateSnapshot, StateSnapshotStage
 from nova.data.models import MarketSnapshot
 from nova.decision.trade_plan import TradePlan
 
@@ -50,6 +51,27 @@ class CycleRunner:
             )
         )
 
+        state_snapshot = self._create_pre_decision_state_snapshot(cycle_id)
+        self.history_db.log_state_snapshot(state_snapshot)
+        self._record(
+            Event(
+                event_type=EventTypes.STATE_SNAPSHOT_CREATED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="CycleRunner",
+                payload={
+                    "state_snapshot_id": state_snapshot.state_snapshot_id,
+                    "run_id": state_snapshot.run_id,
+                    "stage": state_snapshot.stage,
+                    "symbol": state_snapshot.symbol,
+                    "market_snapshot_id": state_snapshot.market_snapshot_id,
+                    "training_role": state_snapshot.training_role,
+                    "data_quality": state_snapshot.data_quality,
+                    "data_usable": state_snapshot.data_usable,
+                },
+            )
+        )
+
         reason, dynamics_summary = self._hold_reason()
         plan = TradePlan(
             decision="HOLD",
@@ -77,6 +99,46 @@ class CycleRunner:
             )
         )
         return plan
+
+    def _create_pre_decision_state_snapshot(self, cycle_id: str) -> StateSnapshot:
+        if self.market_snapshot is None:
+            return StateSnapshot(
+                symbol=self.config.symbol,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                stage=StateSnapshotStage.PRE_DECISION,
+                market_snapshot_id=None,
+                data_quality=0.0,
+                data_usable=False,
+                payload={
+                    "status": "data_warmup_failed",
+                    "warmup_error": self.warmup_error,
+                    "training_note": "Context snapshot only; not an outcome label.",
+                },
+            )
+
+        return StateSnapshot(
+            symbol=self.config.symbol,
+            run_id=self.run_id,
+            cycle_id=cycle_id,
+            stage=StateSnapshotStage.PRE_DECISION,
+            market_snapshot_id=self.market_snapshot.snapshot_id,
+            data_quality=self.market_snapshot.quality.score,
+            data_usable=self.market_snapshot.quality.is_usable,
+            volatility_state="not_evaluated",
+            liquidity_state="not_evaluated" if self.market_snapshot.orderbook is None else "orderbook_snapshot_available",
+            scale_state="not_evaluated",
+            conflict_score=0.0,
+            payload={
+                "market_snapshot_created_at": self.market_snapshot.created_at,
+                "base_timeframe": self.market_snapshot.base_timeframe,
+                "quality_issue_codes": self.market_snapshot.quality.issue_codes,
+                "candle_counts": {
+                    timeframe: series.count for timeframe, series in sorted(self.market_snapshot.candles.items())
+                },
+                "training_note": "Context snapshot only; not an outcome label.",
+            },
+        )
 
     def _hold_reason(self) -> tuple[str, dict[str, object]]:
         if self.market_snapshot is None:

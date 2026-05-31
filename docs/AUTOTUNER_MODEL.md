@@ -22,6 +22,32 @@ Autotuner must preserve the evidence tier when reading matrix history:
 
 These streams must not be collapsed into one statistic, otherwise matrix feedback can look like independent confirmation.
 
+## StateSnapshot rule
+
+State snapshots are training context, not training labels.
+
+Autotuner may use `StateSnapshot` rows to learn under which conditions evidence, matrices, TradePlans and outcomes worked or failed:
+
+- data quality and freshness;
+- volatility/regime state;
+- liquidity state;
+- scale tension or conflict;
+- cross-field relations;
+- recheck flags;
+- snapshot stage and lineage.
+
+Autotuner must not collapse state context into primary evidence accuracy or outcome labels. The learning streams remain separated:
+
+```text
+RAW evidence snapshot
+StateSnapshot context_at_decision_time
+Decision/TradePlan snapshot
+Outcome snapshot
+Autotune target
+```
+
+StateSnapshot must be immutable, timestamped, stage-separated and logged before the outcome is known. Recomputing past state after the outcome and treating it as if it was known at decision time is leakage and is forbidden.
+
 ## Output
 
 `AutotuneRecommendation` with:

@@ -27,6 +27,8 @@ AnalyzerContext
 
 Не каждый анализатор обязан строить собственное поле/полотно. Field-like output разрешён только если у феномена есть естественная геометрия: price-time, price-volume, liquidity-depth, structure zones, regime surface. Иначе анализатор отдаёт cards/state/constraints. Поля разных типов соединяются позже через typed relations и lineage, а не через общий score.
 
+Срез состояния (`StateSnapshot`) не является выходом отдельного анализатора и не заменяет `AnalysisPackage`. Он фиксирует условия цикла вокруг анализа/матрицы/решения как training context для Shadow/Autotuner. Анализаторы могут создавать `StateContribution`, но runtime обязан логировать stage-separated `StateSnapshot` отдельно, чтобы не смешивать context с labels/outcomes.
+
 ## 2. AnalyzerManifest
 
 `AnalyzerManifest` — паспорт анализатора.
@@ -182,6 +184,7 @@ HistoryDB должна работать с минимальным наполне
 - `forecast_matrices`;
 - `matrix_zones`;
 - `state_matrices`.
+- `state_snapshots`.
 
 Эти таблицы должны быть пригодны для Autotuner, Shadow и Laboratory без будущей переделки базовой истории.
 
