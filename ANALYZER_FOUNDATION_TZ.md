@@ -4,6 +4,8 @@
 
 Цель: будущие анализаторы должны добавляться без изменения Matrix, Shadow, Laboratory и Autotuner. Любой анализатор может иметь свою внутреннюю математику, но наружу он обязан отдавать унифицированный пакет evidence.
 
+Анализатор NOVA не является модулем торгового решения. Он не возвращает `buy/sell`, не голосует за направление и не решает вход/выход/стоп. Его задача — описать наблюдаемый феномен через evidence, context, constraints, zones, conflicts, invalidation hints, quality и lineage. Решение принадлежит отдельному контуру `DecisionEngine / TradeCalculator / RiskManager / SafetyKernel`.
+
 ## 1. Базовый поток
 
 ```text
@@ -20,6 +22,8 @@ AnalyzerContext
 - `CardDeck`;
 - `ForecastContribution[]`;
 - `StateContribution[]`.
+
+Пакет не должен содержать плоский signal score вида `+1 long`, `-1 short`, `BUY`, `SELL`. Если старый или стандартный анализатор концептуально похож на сигнальный, адаптер NOVA обязан перевести его результат в карточки/контекст/ограничения без переноса сигнальной механики.
 
 ## 2. AnalyzerManifest
 
@@ -135,6 +139,8 @@ run_validation_pass()
 - validation pass обязан иметь `input_matrix_id`;
 - runner собирает packages, но не строит матрицу сам;
 - матрица строится отдельным этапом после сбора packages.
+
+Runner также не агрегирует анализаторы в голосование. Его роль — stage separation, lineage и доставка packages до следующего слоя.
 
 Это позволяет позже безопасно распараллелить анализаторы без гонки данных.
 

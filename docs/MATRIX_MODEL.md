@@ -6,6 +6,8 @@ The matrix models future price zones over time. It is not a direct trading decis
 
 NOVA Matrix is a **sparse evidence field**, not a buy/sell signal table and not a dense global grid. Empty price-time regions stay empty until evidence creates a local field there.
 
+Hard terminology rule: nothing in Data, Analyzers or Matrix "votes" for a trade. These layers produce evidence, context, constraints, zones, conflicts, quality, uncertainty and lineage. Trade decisions belong only to the DecisionEngine / TradeCalculator / RiskManager / SafetyKernel path.
+
 ## ForecastMatrix
 
 Answers:
@@ -27,6 +29,8 @@ Forecast contributions create **islands of meaning**:
 - `TENSION`: a conflict area between nearby incompatible fields.
 
 There is no global blur. The matrix must never invent probability in void regions just to make a complete heatmap.
+
+The matrix must never flatten cards, timeframes or analyzers into `+1 long / -1 short` counters. A conflict between timeframes is a context/tension object, not arithmetic voting.
 
 Nearby compatible fields may form a bridge when their price, horizon, direction and phenomenon are compatible. Nearby incompatible fields form tension, not an averaged forecast.
 
@@ -109,7 +113,9 @@ High-importance zones can request recheck through `RECHECK_REQUEST` cards. The m
 
 ## Synthetic TF caution
 
-Synthetic 10m/15m/30m/1h built from 5m are not independent votes. They share `dependency_group = ohlcv_resampled` and must be weighted accordingly.
+Synthetic 10m/15m/30m/1h built from 5m are scale/context layers, not independent trade evidence and not votes. They share `dependency_group = ohlcv_resampled` and must be interpreted through lineage and role.
+
+Native higher-timeframe candles from the same market are useful for reconciliation, quality checks and corroboration, but they are still same-market aggregates. They must not be treated as fully independent confirmations merely because they were downloaded as native Binance intervals.
 
 ## Orderbook role
 

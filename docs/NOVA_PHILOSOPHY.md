@@ -14,7 +14,9 @@ Autotuner may tune working parameters such as thresholds, weights, SL/TP ranges,
 
 ### 2. Matrix is the probabilistic market model
 
-The matrix is not a magic BUY/SELL switch. It is a price-time probability field built from traceable contributions.
+The matrix is not a trade-decision switch. It is a price-time probability field built from traceable contributions.
+
+Data, analyzers, timeframes and matrix cards do not vote and do not issue trade decisions. They produce evidence, context, constraints, zones, conflicts, quality, uncertainty and lineage. Trade construction belongs to the DecisionEngine / TradeCalculator / RiskManager path.
 
 The model has two sides:
 
@@ -40,4 +42,3 @@ Commission, spread, slippage and minimum breakeven movement must be estimated be
 ### 6. Dynamics, not only snapshots
 
 The system should learn from market episodes, not only isolated snapshots. A trade is part of a video: matrix slope, confidence trend, volatility expansion, liquidity persistence, MFE/MAE and state conflict changes.
-

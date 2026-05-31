@@ -26,7 +26,7 @@ Analyzers must later speak NOVA contracts:
 - `ForecastContribution`
 - `StateContribution`
 
-Matrix input is a typed evidence flow, not a flat signal vote. Raw primary cards may seed sparse forecast fields; validation, revision and recheck cards update metadata and attention without polluting primary statistics.
+Matrix input is a typed evidence flow, not a flat signal layer and not a voting mechanism. Raw primary cards may seed sparse forecast fields; validation, revision and recheck cards update metadata and attention without polluting primary statistics. Trading decisions belong only to the DecisionEngine / TradeCalculator / RiskManager path.
 
 Matrix technical specification: [`MATRIX_TZ.md`](MATRIX_TZ.md).
 Analyzer foundation specification: [`ANALYZER_FOUNDATION_TZ.md`](ANALYZER_FOUNDATION_TZ.md).

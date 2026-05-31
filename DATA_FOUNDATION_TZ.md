@@ -15,6 +15,8 @@ External source payload
 
 Нельзя отдавать анализаторам сырой Binance response как основной контракт.
 
+Data layer не выдаёт торговых сигналов и не принимает решений. Он поставляет только нормализованные факты, lineage, quality, freshness, gaps, cache/snapshot state и reconciliation metadata. Любая логика `buy/sell/long/short/stop` вне TradeCalculator/RiskManager запрещена.
+
 ## 2. Data inventory по старым анализаторам
 
 | Старый модуль | Будущая роль NOVA | Нужные данные | NOVA-модели |
@@ -164,7 +166,7 @@ Runtime transition rule: после успешного REST warmup `SystemSuperv
 
 ## 8. Synthetic TF rule
 
-Синтетические таймфреймы являются производными от base timeframe. Они полезны, но не являются независимыми evidence.
+Синтетические таймфреймы являются производными от base timeframe. Они полезны как масштабные линзы, но не являются независимыми evidence и не являются голосами.
 
 Они должны иметь:
 
@@ -173,6 +175,15 @@ source_type = SYNTHETIC
 dependency_group = ohlcv_resampled
 parent/base series lineage в payload
 ```
+
+Timeframe role rule:
+
+- `5m` base TF даёт локальную динамику и оперативную свежесть;
+- `10m/15m/30m/1h` synthetic TF дают контекст устойчивости/структуры;
+- `4h/8h/12h` synthetic TF дают крупный контекст/режим/границы риска;
+- native higher TF REST используется для reconciliation/quality/corroboration, но не становится независимым торговым голосом.
+
+Запрещено считать multi-TF как арифметику `5m +1`, `1h +1`, `4h -1`. TF должны попадать дальше как context/constraints/conflict/lineage, а не как buy/sell score.
 
 ## 9. Следующий шаг
 
