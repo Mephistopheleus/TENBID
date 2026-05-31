@@ -199,4 +199,4 @@ ForecastMatrixEngine Core
 
 Он будет читать raw primary packages/cards/contributions и строить primary/reconciled matrix layers.
 
-Текущая реализация уже строит минимальный sparse primary layer: один evidence-backed zone per raw primary contribution, без dense grid и без торгового решения.
+Текущая реализация уже строит sparse primary layer: совместимые overlapping raw primary contributions группируются в один evidence-backed island, несовместимые overlapping fields дают `TENSION` metadata. Dense grid и торговые решения не создаются.

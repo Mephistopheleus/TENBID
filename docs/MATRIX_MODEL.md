@@ -34,6 +34,10 @@ The matrix must never flatten cards, timeframes or analyzers into `+1 long / -1 
 
 Nearby compatible fields may form a bridge when their price, horizon, direction and phenomenon are compatible. Nearby incompatible fields form tension, not an averaged forecast.
 
+Current primary Matrix Core groups only overlapping compatible raw primary contributions: same scenario, phenomenon, field shape and close horizon. The grouped zone keeps the common overlap as `CORE` and stores the wider union as `HALO`; empty space outside contributed ranges remains empty.
+
+Overlapping incompatible primary fields create `TENSION` zones with recheck metadata. Tension zones are context/attention objects, not trade decisions and not independent confirmation.
+
 ## CardDeck and no-echo rule
 
 NOVA uses typed evidence cards to avoid self-confirming statistics:
@@ -178,4 +182,4 @@ All ForecastMatrix zones store contributor IDs. Contributions reference `analysi
 
 Primary statistics must be computed from raw primary evidence only. Assisted/revised evidence is tracked separately so Autotuner can compare raw accuracy and matrix-assisted accuracy without echo pollution.
 
-Current runtime implementation builds a minimal sparse primary matrix from raw primary contributions. It preserves empty space, logs lineage, and remains upstream of any future DecisionEngine / TradeCalculator / RiskManager path.
+Current runtime implementation builds a sparse primary matrix from raw primary contributions. It groups compatible overlapping field seeds, emits tension metadata for incompatible overlaps, preserves empty space, logs lineage, and remains upstream of any future DecisionEngine / TradeCalculator / RiskManager path.
