@@ -28,6 +28,8 @@ Analyzers must later speak NOVA contracts:
 
 Matrix input is a typed evidence flow, not a flat signal vote. Raw primary cards may seed sparse forecast fields; validation, revision and recheck cards update metadata and attention without polluting primary statistics.
 
+Matrix technical specification: [`MATRIX_TZ.md`](MATRIX_TZ.md).
+
 ## Safety and mode
 
 NOVA is designed with TESTNET and LIVE key sections, but the active mode is TESTNET. LIVE execution remains locked until explicitly designed and reviewed later.
