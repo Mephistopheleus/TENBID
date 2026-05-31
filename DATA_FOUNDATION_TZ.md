@@ -128,8 +128,8 @@ REST warmup 300x5m
 → SyntheticTimeframeBuilder: 10m/15m/30m/1h/4h/8h/12h
 → MarketSnapshot
 → SystemSupervisor logs snapshot and passes it to CycleRunner
-→ WS kline updates
-→ CandleCache update
+→ WS kline updates for closed base-TF candles
+→ CandleCache update + synthetic TF rebuild
 → periodic REST reconciliation
 ```
 
@@ -155,6 +155,8 @@ REST warmup 300x5m
 
 Data warmup должен писать события уровня процесса и сохранять snapshot metadata/payload. Высокочастотные WS ticks не должны писаться в EventLog по одному событию; они идут через cache, а в журнал попадают агрегированные состояния/ошибки/reconnect events.
 
+WS kline rule: public stream сообщения принимаются только как обновление OHLCV cache. В cache попадают закрытые candles базового TF; незакрытые kline ticks используются только как stream liveness/probe signal и не становятся evidence. После принятой закрытой свечи synthetic TF пересобираются как производные `ohlcv_resampled`.
+
 Runtime transition rule: после успешного REST warmup `SystemSupervisor` сохраняет `MarketSnapshot`, пишет `DATA_WARMUP_COMPLETED`/`MARKET_SNAPSHOT_CREATED` и запускает цикл уже со статусом `market_snapshot_ready`. Если warmup падает, цикл остаётся безопасным `HOLD`, а анализаторы/Matrix не стартуют.
 
 ## 8. Synthetic TF rule
@@ -171,10 +173,10 @@ parent/base series lineage в payload
 
 ## 9. Следующий шаг
 
-После Data Warmup runtime integration:
+После WS kline startup probe:
 
 ```text
-WS kline live updater → Matrix Core + first MarketStructureAnalyzer
+Long-running WS loop/reconnect policy → Matrix Core + first MarketStructureAnalyzer
 ```
 
 Data Layer v0 содержит:
@@ -187,5 +189,6 @@ Data Layer v0 содержит:
 - `DataScheduler`.
 - `MarketDataWarmupService`: REST warmup → cache → synthetic TF → native higher-TF reconciliation → MarketSnapshot.
 - `SystemSupervisor` runtime transition: warmup lifecycle events → snapshot logging → `CycleRunner` receives current `MarketSnapshot`.
+- `WsKlineCacheUpdater`: public WS kline startup probe, closed base-TF candle cache update, synthetic TF rebuild, aggregate stream lifecycle logging.
 
 Торговые операции и LIVE execution не входят в этот шаг.

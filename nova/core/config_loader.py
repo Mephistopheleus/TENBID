@@ -30,6 +30,8 @@ class RuntimeConfig:
     public_ws_base_url: str
     rest_timeout_sec: float
     use_ws_klines: bool
+    ws_startup_probe_messages: int
+    ws_startup_probe_timeout_sec: float
     native_tf_reconcile_enabled: bool
     orderbook_mode: str
     orderbook_limit: int
@@ -69,6 +71,8 @@ class ConfigLoader:
             public_ws_base_url=base.get("DATA", "public_ws_base_url", fallback="wss://stream.binancefuture.com/ws"),
             rest_timeout_sec=base.getfloat("DATA", "rest_timeout_sec", fallback=10.0),
             use_ws_klines=base.getboolean("DATA", "use_ws_klines", fallback=True),
+            ws_startup_probe_messages=base.getint("DATA", "ws_startup_probe_messages", fallback=5),
+            ws_startup_probe_timeout_sec=base.getfloat("DATA", "ws_startup_probe_timeout_sec", fallback=10.0),
             native_tf_reconcile_enabled=base.getboolean("DATA", "native_tf_reconcile_enabled", fallback=True),
             orderbook_mode=base.get("DATA", "orderbook_mode", fallback="on_demand_rate_limited"),
             orderbook_limit=base.getint("DATA", "orderbook_limit", fallback=20),

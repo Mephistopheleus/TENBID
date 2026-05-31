@@ -7,6 +7,7 @@ first MarketSnapshot from REST warmup and runs one safe HOLD cycle.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 from nova.core.config_loader import ConfigLoader, RuntimeConfig
@@ -16,7 +17,10 @@ from nova.core.history_db import HistoryDB
 from nova.core.ids import RUN, new_id
 from nova.core.safety_kernel import SafetyKernel
 from nova.data.binance_rest import BinanceRestClient, BinanceRestConfig
+from nova.data.binance_ws import BinanceWsClient, BinanceWsConfig
+from nova.data.candle_cache import CandleCache
 from nova.data.warmup import DataWarmupConfig, DataWarmupResult, MarketDataWarmupService
+from nova.data.ws_kline_updater import WsKlineCacheUpdater, WsKlineUpdaterConfig
 from nova.supervisor.cycle_runner import CycleRunner
 
 
@@ -31,6 +35,7 @@ class SystemSupervisor:
         run_id = new_id(RUN)
         event_log = EventLog(str(config.event_log_path))
         history_db = HistoryDB(config.sqlite_path)
+        candle_cache = CandleCache()
 
         self._record(
             event_log,
@@ -60,6 +65,8 @@ class SystemSupervisor:
                     "synthetic_timeframes": config.synthetic_timeframes,
                     "warmup_candles": config.warmup_candles,
                     "use_ws_klines": config.use_ws_klines,
+                    "ws_startup_probe_messages": config.ws_startup_probe_messages,
+                    "ws_startup_probe_timeout_sec": config.ws_startup_probe_timeout_sec,
                     "native_tf_reconcile_enabled": config.native_tf_reconcile_enabled,
                     "orderbook_mode": config.orderbook_mode,
                 },
@@ -79,7 +86,7 @@ class SystemSupervisor:
         warmup_result = None
         warmup_error = None
         try:
-            warmup_result = self._warmup_market_data(config, run_id, event_log, history_db)
+            warmup_result = self._warmup_market_data(config, run_id, event_log, history_db, candle_cache)
         except Exception as exc:  # noqa: BLE001 - safety path records the failure and continues to HOLD.
             warmup_error = str(exc)
             self._record(
@@ -98,6 +105,9 @@ class SystemSupervisor:
                 ),
             )
 
+        if warmup_result and config.use_ws_klines and warmup_result.snapshot.quality.is_usable:
+            self._run_ws_kline_startup_probe(config, run_id, event_log, history_db, candle_cache)
+
         plan = CycleRunner(
             run_id=run_id,
             config=config,
@@ -115,6 +125,7 @@ class SystemSupervisor:
         run_id: str,
         event_log: EventLog,
         history_db: HistoryDB,
+        candle_cache: CandleCache,
     ) -> DataWarmupResult:
         self._record(
             event_log,
@@ -141,7 +152,7 @@ class SystemSupervisor:
                 timeout_sec=config.rest_timeout_sec,
             )
         )
-        warmup = MarketDataWarmupService(rest_client)
+        warmup = MarketDataWarmupService(rest_client, cache=candle_cache)
         result = warmup.warmup(
             DataWarmupConfig(
                 symbol=config.symbol,
@@ -193,11 +204,86 @@ class SystemSupervisor:
                     "candle_counts": candle_counts,
                     "native_issue_codes": native_issue_codes,
                     "ws_klines_configured": config.use_ws_klines,
-                    "ws_loop_started": False,
+                    "ws_kline_probe_pending": config.use_ws_klines,
                 },
             ),
         )
         return result
+
+    def _run_ws_kline_startup_probe(
+        self,
+        config: RuntimeConfig,
+        run_id: str,
+        event_log: EventLog,
+        history_db: HistoryDB,
+        candle_cache: CandleCache,
+    ) -> None:
+        ws_client = BinanceWsClient(BinanceWsConfig(base_url=config.public_ws_base_url))
+        updater_config = WsKlineUpdaterConfig(
+            symbol=config.symbol,
+            base_timeframe=config.base_timeframe,
+            synthetic_timeframes=config.synthetic_timeframes,
+            max_messages=config.ws_startup_probe_messages,
+            timeout_sec=config.ws_startup_probe_timeout_sec,
+            closed_candle_target=1,
+        )
+        stream_url = ws_client.kline_stream_url(config.symbol, config.base_timeframe)
+        self._record(
+            event_log,
+            history_db,
+            Event(
+                event_type=EventTypes.WS_KLINE_STREAM_STARTED,
+                run_id=run_id,
+                source="SystemSupervisor",
+                payload={
+                    "symbol": config.symbol,
+                    "base_timeframe": config.base_timeframe,
+                    "stream_url": stream_url,
+                    "max_messages": updater_config.max_messages,
+                    "timeout_sec": updater_config.timeout_sec,
+                    "mode": "startup_probe",
+                },
+            ),
+        )
+
+        try:
+            result = WsKlineCacheUpdater(ws_client, candle_cache).consume(updater_config)
+        except Exception as exc:  # noqa: BLE001 - WS failure must not break the safe HOLD cycle.
+            self._record(
+                event_log,
+                history_db,
+                Event(
+                    event_type=EventTypes.WS_KLINE_STREAM_FAILED,
+                    run_id=run_id,
+                    source="SystemSupervisor",
+                    payload={
+                        "symbol": config.symbol,
+                        "base_timeframe": config.base_timeframe,
+                        "stream_url": stream_url,
+                        "mode": "startup_probe",
+                        "error": str(exc),
+                    },
+                ),
+            )
+            return
+
+        event_type = EventTypes.WS_KLINE_STREAM_COMPLETED if result.is_usable else EventTypes.WS_KLINE_STREAM_FAILED
+        self._record(
+            event_log,
+            history_db,
+            Event(
+                event_type=event_type,
+                run_id=run_id,
+                source="SystemSupervisor",
+                payload={
+                    **asdict(result),
+                    "symbol": config.symbol,
+                    "base_timeframe": config.base_timeframe,
+                    "mode": "startup_probe",
+                    "closed_candles_required": False,
+                },
+            ),
+        )
 
     @staticmethod
     def _validate_safety(config: RuntimeConfig) -> None:
