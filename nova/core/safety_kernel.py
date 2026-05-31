@@ -1,6 +1,9 @@
 """Immutable safety boundaries.
 
-Autotuner may tune working parameters, but SafetyKernel defines what must never be crossed.
+SafetyKernel is a hard guardrail, not a calculator and not an analyzer. It should
+only reject states/plans that violate non-negotiable boundaries: mode locks,
+allowed symbol, exposure caps and other owner-defined safety invariants.
+Autotuner may tune working parameters, but it must not tune these boundaries.
 """
 
 from __future__ import annotations

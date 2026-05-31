@@ -1,8 +1,10 @@
 """Matrix data contracts.
 
-Analyzers will later emit AnalysisResult plus ForecastContribution and/or
-StateContribution; matrix engines aggregate standardized contributions without
-knowing analyzer-specific payload internals.
+Terminology guardrail: historical names such as ForecastContribution and
+direction are contract labels, not signal-bot language. In NOVA they mean
+"вклад в область price-time поля" and "тип сценарной области / контекстная
+роль". Matrix stores evidence geometry and lineage; it does not choose market
+actions and does not count votes.
 """
 
 from __future__ import annotations
@@ -18,6 +20,13 @@ from nova.core.ids import FORECAST, MATRIX, MATRIX_ZONE, new_id
 
 @dataclass(frozen=True)
 class ForecastContribution:
+    """Evidence-backed contribution to a sparse price-time field.
+
+    This is not a command and not an analyzer decision. Keep `direction` values
+    semantic/contextual (for example CONTEXT, TENSION, RANGE_CONTEXT), not
+    classic signal words.
+    """
+
     symbol: str
     source_analysis_result_id: str
     timeframe: str
@@ -47,6 +56,12 @@ class ForecastContribution:
 
 @dataclass(frozen=True)
 class MatrixZone:
+    """Sparse evidence island or tension area.
+
+    A zone describes where evidence exists and how reliable/contested it is.
+    It is input context for later calculators, never an action by itself.
+    """
+
     price_low: float
     price_high: float
     horizon_min: int

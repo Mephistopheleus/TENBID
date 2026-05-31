@@ -1,7 +1,8 @@
 """First MarketSnapshot-backed structure analyzer.
 
-The analyzer describes the current local price range as evidence/context. It does
-not produce buy/sell/stop instructions and does not own trade decisions.
+Guardrail: this analyzer observes market structure and emits context/lineage for
+Matrix. It does not calculate or own market actions; calculators and risk modules
+live in a separate layer.
 """
 
 from __future__ import annotations
@@ -118,6 +119,8 @@ class MarketStructureAnalyzer:
             price_high=metrics["range_high"],
             probability=confidence,
             confidence=confidence,
+            # Existing contract field name is `direction`, but NOVA uses it as a
+            # context/scenario role. `CONTEXT` deliberately avoids action words.
             direction="CONTEXT",
             dependency_group=self.manifest.dependency_group,
             decay_sec=max(60, horizon_min * 60),

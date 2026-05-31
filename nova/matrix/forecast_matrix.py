@@ -1,9 +1,9 @@
 """Forecast matrix engine.
 
-Builds a sparse primary matrix from raw primary ForecastContributions. Compatible
-overlapping contributions can be grouped into one evidence-backed island;
-incompatible overlaps become tension metadata. This is not a decision engine and
-it does not densify empty price-time regions.
+Mental guardrail: this module builds sparse evidence islands, not a signal table.
+Compatible overlapping contributions can be grouped into one evidence-backed
+island; incompatible overlaps become tension metadata. Empty regions stay empty,
+and no code here chooses a market action.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ class ForecastMatrixEngine:
     def build(self, cycle_id: str, symbol: str, contributions: Iterable[ForecastContribution]) -> ForecastMatrix:
         contributions = list(contributions)
         MatrixValidator().validate_primary_contributions(contributions)
+        # Primary layer uses only raw primary evidence. Grouping below records
+        # geometry/lineage; it is not a majority mechanism and not a decision.
         groups = self._group_compatible_contributions(contributions)
         core_zones = [self._zone_from_group(group) for group in groups]
         zones = [*core_zones, *self._tension_zones(core_zones)]
@@ -95,6 +97,9 @@ class ForecastMatrixEngine:
         source_analysis_result_ids = _unique(item.source_analysis_result_id for item in contributions)
         source_card_ids = _unique(card_id for item in contributions for card_id in item.source_card_ids)
         first = contributions[0]
+        # CORE is the common overlap supported by all grouped evidence.
+        # HALO is the wider uncertainty envelope. Nothing outside these ranges
+        # is invented just to make a complete grid.
         return MatrixZone(
             price_low=core_price_low,
             price_high=core_price_high,
@@ -143,6 +148,8 @@ class ForecastMatrixEngine:
                     right.price_high,
                 )
                 tensions.append(
+                    # TENSION means "перепроверь/учти конфликт контекста".
+                    # It is not independent confirmation and not an action.
                     MatrixZone(
                         price_low=overlap_low,
                         price_high=overlap_high,

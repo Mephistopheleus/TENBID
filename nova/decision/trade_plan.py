@@ -1,6 +1,8 @@
 """Canonical TradePlan contract.
 
-Every cycle should produce a TradePlan, even when the decision is HOLD.
+TradePlan is the later calculator/risk-manager output envelope. Data, analyzers
+and matrix must not fill it directly. Current runtime uses HOLD only as a safe
+placeholder while the calculation layer is not connected.
 """
 
 from __future__ import annotations
@@ -37,4 +39,3 @@ class TradePlan:
     costs: Optional[CostEstimate] = None
     dynamics_summary: Dict[str, object] = field(default_factory=dict)
     plan_id: str = field(default_factory=lambda: new_id(PLAN))
-

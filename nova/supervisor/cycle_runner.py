@@ -1,8 +1,8 @@
 """Cycle runner.
 
-The runtime cycle now accepts the current MarketSnapshot from the data warmup
-stage, but still returns a traceable HOLD until analyzers and Matrix Core are
-connected.
+CycleRunner stitches data snapshot, state snapshot, analyzers and matrix into a
+traceable context package. It is not the market-action calculator; until that
+separate layer exists, the runtime finishes with a safe placeholder TradePlan.
 """
 
 from __future__ import annotations
