@@ -130,6 +130,7 @@ REST warmup 300x5m
 → SystemSupervisor logs snapshot and passes it to CycleRunner
 → WS kline updates for closed base-TF candles
 → CandleCache update + synthetic TF rebuild
+→ WS loop stops/reconnects by policy and logs aggregate lifecycle
 → periodic REST reconciliation
 ```
 
@@ -157,6 +158,8 @@ Data warmup должен писать события уровня процесс
 
 WS kline rule: public stream сообщения принимаются только как обновление OHLCV cache. В cache попадают закрытые candles базового TF; незакрытые kline ticks используются только как stream liveness/probe signal и не становятся evidence. После принятой закрытой свечи synthetic TF пересобираются как производные `ohlcv_resampled`.
 
+WS loop rule: reconnect/backoff/heartbeat живут на data/supervisor уровне. EventLog не получает каждый tick; он получает `WS_KLINE_LOOP_STARTED` и `WS_KLINE_LOOP_STOPPED` с агрегатами: message count, open/closed candle counts, reconnect count, stopped reason, issue codes. Текущий `nova.main` остаётся bounded runtime slice, а не бесконечным daemon; полноценный daemon supervisor добавляется отдельным шагом.
+
 Runtime transition rule: после успешного REST warmup `SystemSupervisor` сохраняет `MarketSnapshot`, пишет `DATA_WARMUP_COMPLETED`/`MARKET_SNAPSHOT_CREATED` и запускает цикл уже со статусом `market_snapshot_ready`. Если warmup падает, цикл остаётся безопасным `HOLD`, а анализаторы/Matrix не стартуют.
 
 ## 8. Synthetic TF rule
@@ -173,10 +176,10 @@ parent/base series lineage в payload
 
 ## 9. Следующий шаг
 
-После WS kline startup probe:
+После WS kline loop slice:
 
 ```text
-Long-running WS loop/reconnect policy → Matrix Core + first MarketStructureAnalyzer
+Periodic REST reconciliation + snapshot refresh → Matrix Core + first MarketStructureAnalyzer
 ```
 
 Data Layer v0 содержит:
@@ -190,5 +193,6 @@ Data Layer v0 содержит:
 - `MarketDataWarmupService`: REST warmup → cache → synthetic TF → native higher-TF reconciliation → MarketSnapshot.
 - `SystemSupervisor` runtime transition: warmup lifecycle events → snapshot logging → `CycleRunner` receives current `MarketSnapshot`.
 - `WsKlineCacheUpdater`: public WS kline startup probe, closed base-TF candle cache update, synthetic TF rebuild, aggregate stream lifecycle logging.
+- `WsKlineStreamLoop`: bounded WS kline runtime slice with reconnect/backoff policy and aggregate lifecycle logging.
 
 Торговые операции и LIVE execution не входят в этот шаг.

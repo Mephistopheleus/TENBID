@@ -20,7 +20,12 @@ from nova.data.binance_rest import BinanceRestClient, BinanceRestConfig
 from nova.data.binance_ws import BinanceWsClient, BinanceWsConfig
 from nova.data.candle_cache import CandleCache
 from nova.data.warmup import DataWarmupConfig, DataWarmupResult, MarketDataWarmupService
-from nova.data.ws_kline_updater import WsKlineCacheUpdater, WsKlineUpdaterConfig
+from nova.data.ws_kline_updater import (
+    WsKlineCacheUpdater,
+    WsKlineLoopConfig,
+    WsKlineStreamLoop,
+    WsKlineUpdaterConfig,
+)
 from nova.supervisor.cycle_runner import CycleRunner
 
 
@@ -65,8 +70,11 @@ class SystemSupervisor:
                     "synthetic_timeframes": config.synthetic_timeframes,
                     "warmup_candles": config.warmup_candles,
                     "use_ws_klines": config.use_ws_klines,
+                    "ws_kline_mode": config.ws_kline_mode,
                     "ws_startup_probe_messages": config.ws_startup_probe_messages,
                     "ws_startup_probe_timeout_sec": config.ws_startup_probe_timeout_sec,
+                    "ws_loop_max_runtime_sec": config.ws_loop_max_runtime_sec,
+                    "ws_loop_max_reconnects": config.ws_loop_max_reconnects,
                     "native_tf_reconcile_enabled": config.native_tf_reconcile_enabled,
                     "orderbook_mode": config.orderbook_mode,
                 },
@@ -106,7 +114,7 @@ class SystemSupervisor:
             )
 
         if warmup_result and config.use_ws_klines and warmup_result.snapshot.quality.is_usable:
-            self._run_ws_kline_startup_probe(config, run_id, event_log, history_db, candle_cache)
+            self._run_ws_kline_runtime(config, run_id, event_log, history_db, candle_cache)
 
         plan = CycleRunner(
             run_id=run_id,
@@ -204,11 +212,43 @@ class SystemSupervisor:
                     "candle_counts": candle_counts,
                     "native_issue_codes": native_issue_codes,
                     "ws_klines_configured": config.use_ws_klines,
-                    "ws_kline_probe_pending": config.use_ws_klines,
+                    "ws_kline_mode": config.ws_kline_mode,
                 },
             ),
         )
         return result
+
+    def _run_ws_kline_runtime(
+        self,
+        config: RuntimeConfig,
+        run_id: str,
+        event_log: EventLog,
+        history_db: HistoryDB,
+        candle_cache: CandleCache,
+    ) -> None:
+        mode = config.ws_kline_mode.lower()
+        if mode == "startup_probe":
+            self._run_ws_kline_startup_probe(config, run_id, event_log, history_db, candle_cache)
+            return
+        if mode in {"loop_slice", "live_loop"}:
+            self._run_ws_kline_loop(config, run_id, event_log, history_db, candle_cache, mode=mode)
+            return
+
+        self._record(
+            event_log,
+            history_db,
+            Event(
+                event_type=EventTypes.WS_KLINE_STREAM_FAILED,
+                run_id=run_id,
+                source="SystemSupervisor",
+                payload={
+                    "symbol": config.symbol,
+                    "base_timeframe": config.base_timeframe,
+                    "mode": mode,
+                    "error": "unsupported_ws_kline_mode",
+                },
+            ),
+        )
 
     def _run_ws_kline_startup_probe(
         self,
@@ -281,6 +321,87 @@ class SystemSupervisor:
                     "base_timeframe": config.base_timeframe,
                     "mode": "startup_probe",
                     "closed_candles_required": False,
+                },
+            ),
+        )
+
+    def _run_ws_kline_loop(
+        self,
+        config: RuntimeConfig,
+        run_id: str,
+        event_log: EventLog,
+        history_db: HistoryDB,
+        candle_cache: CandleCache,
+        mode: str,
+    ) -> None:
+        ws_client = BinanceWsClient(BinanceWsConfig(base_url=config.public_ws_base_url))
+        loop_config = WsKlineLoopConfig(
+            symbol=config.symbol,
+            base_timeframe=config.base_timeframe,
+            synthetic_timeframes=config.synthetic_timeframes,
+            max_runtime_sec=config.ws_loop_max_runtime_sec,
+            connection_timeout_sec=config.ws_loop_connection_timeout_sec,
+            max_reconnects=config.ws_loop_max_reconnects,
+            reconnect_backoff_sec=config.ws_loop_reconnect_backoff_sec,
+        )
+        stream_url = ws_client.kline_stream_url(config.symbol, config.base_timeframe)
+        self._record(
+            event_log,
+            history_db,
+            Event(
+                event_type=EventTypes.WS_KLINE_LOOP_STARTED,
+                run_id=run_id,
+                source="SystemSupervisor",
+                payload={
+                    "symbol": config.symbol,
+                    "base_timeframe": config.base_timeframe,
+                    "stream_url": stream_url,
+                    "mode": mode,
+                    "max_runtime_sec": loop_config.max_runtime_sec,
+                    "connection_timeout_sec": loop_config.connection_timeout_sec,
+                    "max_reconnects": loop_config.max_reconnects,
+                    "reconnect_backoff_sec": loop_config.reconnect_backoff_sec,
+                    "bounded_runtime": True,
+                },
+            ),
+        )
+
+        try:
+            result = WsKlineStreamLoop(ws_client, candle_cache).run(loop_config)
+        except Exception as exc:  # noqa: BLE001 - WS loop failure must not break the safe HOLD cycle.
+            self._record(
+                event_log,
+                history_db,
+                Event(
+                    event_type=EventTypes.WS_KLINE_LOOP_STOPPED,
+                    run_id=run_id,
+                    source="SystemSupervisor",
+                    payload={
+                        "symbol": config.symbol,
+                        "base_timeframe": config.base_timeframe,
+                        "stream_url": stream_url,
+                        "mode": mode,
+                        "stopped_reason": "exception",
+                        "issue_codes": ["ws_kline_loop_failed"],
+                        "error": str(exc),
+                    },
+                ),
+            )
+            return
+
+        self._record(
+            event_log,
+            history_db,
+            Event(
+                event_type=EventTypes.WS_KLINE_LOOP_STOPPED,
+                run_id=run_id,
+                source="SystemSupervisor",
+                payload={
+                    **asdict(result),
+                    "symbol": config.symbol,
+                    "base_timeframe": config.base_timeframe,
+                    "mode": mode,
+                    "bounded_runtime": True,
                 },
             ),
         )
