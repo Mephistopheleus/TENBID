@@ -134,6 +134,26 @@ REST warmup 300x5m
 
 Для старших TF можно дополнительно скачать native candles REST-ом за сопоставимый период и использовать их для reconciliation/quality, но synthetic TF остаются помеченными как производные.
 
+Важно: не каждый synthetic TF имеет native Binance interval. Например, `10m` строится из `5m`, но не сверяется как native interval, если биржа такой interval не поддерживает. Это записывается как `native_interval_not_supported`, а не как ошибка прогрева.
+
+## 7.1 Кэширование
+
+Кэширование нужно сразу, но в два уровня:
+
+1. **In-memory rolling cache сейчас** — `CandleCache` хранит прогретые REST candles и обновления WS. Анализаторы читают данные из snapshot/cache, а не напрямую из Binance.
+2. **Persistent raw candle archive позже** — понадобится для ускорения рестартов, backtests, лаборатории и больших исторических прогонов. На текущем этапе не пишем каждую свечу в SQLite как основную историю, чтобы не раздувать БД до появления политики retention.
+
+На текущем этапе HistoryDB сохраняет `MarketSnapshot` как payload для lineage/debug. Это не замена полноценному candle archive.
+
+## 7.2 Логирование
+
+Логирование делится на два слоя:
+
+- `EventLog` JSONL — append-only журнал фактов: warmup started/completed/failed, snapshot created, matrix built, trade plan created.
+- `HistoryDB` SQLite — queryable memory: market snapshots, analysis packages, cards, contributions, matrices, plans and outcomes.
+
+Data warmup должен писать события уровня процесса и сохранять snapshot metadata/payload. Высокочастотные WS ticks не должны писаться в EventLog по одному событию; они идут через cache, а в журнал попадают агрегированные состояния/ошибки/reconnect events.
+
 ## 8. Synthetic TF rule
 
 Синтетические таймфреймы являются производными от base timeframe. Они полезны, но не являются независимыми evidence.
@@ -162,5 +182,6 @@ Data Layer v0 содержит:
 - `SyntheticTimeframeBuilder`;
 - `TimeframeReconciler`;
 - `DataScheduler`.
+- `MarketDataWarmupService`: REST warmup → cache → synthetic TF → native higher-TF reconciliation → MarketSnapshot.
 
 Торговые операции и LIVE execution не входят в этот шаг.

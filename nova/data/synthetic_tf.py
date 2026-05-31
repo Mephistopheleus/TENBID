@@ -21,6 +21,7 @@ class SyntheticTimeframeBuilder:
         target_minutes = timeframe_to_minutes(target_timeframe)
         if target_minutes <= base_minutes or target_minutes % base_minutes != 0:
             raise ValueError(f"Target timeframe {target_timeframe} must be a multiple of {base_series.timeframe}")
+        expected_bucket_size = target_minutes // base_minutes
         buckets: Dict[int, List[Candle]] = defaultdict(list)
         for candle in base_series.candles:
             bucket = int(_parse_iso(candle.open_time).timestamp() // (target_minutes * 60))
@@ -36,14 +37,28 @@ class SyntheticTimeframeBuilder:
                 "dependency_group": "ohlcv_resampled",
             },
         )
-        synthetic = [self._aggregate_bucket(base_series.symbol, target_timeframe, source, items) for _, items in sorted(buckets.items())]
+        full_buckets = [(bucket, items) for bucket, items in sorted(buckets.items()) if len(items) == expected_bucket_size]
+        skipped_partial_buckets = len(buckets) - len(full_buckets)
+        synthetic = [
+            self._aggregate_bucket(base_series.symbol, target_timeframe, source, items)
+            for _, items in full_buckets
+        ]
         return CandleSeries(
             symbol=base_series.symbol,
             timeframe=target_timeframe,
             candles=synthetic,
             source=source,
-            quality=DataQualityReport(is_usable=bool(synthetic), score=1.0 if synthetic else 0.0),
-            payload={"dependency_group": "ohlcv_resampled"},
+            quality=DataQualityReport(
+                is_usable=bool(synthetic),
+                score=1.0 if synthetic else 0.0,
+                issue_codes=["partial_synthetic_buckets_skipped"] if skipped_partial_buckets else [],
+                payload={"skipped_partial_buckets": skipped_partial_buckets},
+            ),
+            payload={
+                "dependency_group": "ohlcv_resampled",
+                "expected_bucket_size": expected_bucket_size,
+                "skipped_partial_buckets": skipped_partial_buckets,
+            },
         )
 
     @staticmethod

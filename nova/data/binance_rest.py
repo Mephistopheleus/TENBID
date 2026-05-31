@@ -58,9 +58,21 @@ class BinanceRestClient:
             raise ValueError("Unexpected Binance ticker response")
         return float(payload["price"])
 
-    def get_klines(self, symbol: str, interval: str, limit: int = 300) -> CandleSeries:
+    def get_klines(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 300,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> CandleSeries:
         symbol = symbol.upper()
-        payload = self._get(self._path("klines"), {"symbol": symbol, "interval": interval, "limit": limit})
+        params: Dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time_ms is not None:
+            params["startTime"] = start_time_ms
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+        payload = self._get(self._path("klines"), params)
         if not isinstance(payload, list):
             raise ValueError("Unexpected Binance klines response")
         source = DataSourceRef(
@@ -69,7 +81,12 @@ class BinanceRestClient:
             endpoint=self._path("klines"),
             symbol=symbol,
             timeframe=interval,
-            payload={"market_type": self.config.market_type, "limit": limit},
+            payload={
+                "market_type": self.config.market_type,
+                "limit": limit,
+                "start_time_ms": start_time_ms,
+                "end_time_ms": end_time_ms,
+            },
         )
         candles = [self._kline_to_candle(symbol, interval, row, source) for row in payload]
         quality = DataQualityReport(

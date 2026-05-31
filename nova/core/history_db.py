@@ -15,6 +15,7 @@ from nova.analysis.models import AnalysisResult, StateContribution
 from nova.analyzers.contracts import AnalysisPackage
 from nova.cards.models import CardDeck, EvidenceCard
 from nova.core.events import Event
+from nova.data.models import MarketSnapshot
 from nova.decision.trade_plan import TradePlan
 from nova.matrix.models import ForecastContribution, ForecastMatrix, MatrixZone, StateMatrix
 
@@ -60,6 +61,20 @@ class HistoryDB:
                     reason TEXT NOT NULL,
                     profile_id TEXT NOT NULL,
                     payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS market_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    primary_symbol TEXT NOT NULL,
+                    base_timeframe TEXT NOT NULL,
+                    quality_score REAL NOT NULL,
+                    is_usable INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL
                 )
                 """
             )
@@ -210,6 +225,7 @@ class HistoryDB:
             "CREATE INDEX IF NOT EXISTS idx_cards_source_analysis ON evidence_cards(source_analysis_result_id)",
             "CREATE INDEX IF NOT EXISTS idx_forecast_source_analysis ON forecast_contributions(source_analysis_result_id)",
             "CREATE INDEX IF NOT EXISTS idx_matrix_zones_matrix ON matrix_zones(matrix_id)",
+            "CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(primary_symbol)",
         ]
 
     def log_event(self, event: Event) -> None:
@@ -249,6 +265,28 @@ class HistoryDB:
                     plan.reason,
                     plan.profile_id,
                     json.dumps(payload, ensure_ascii=False, default=str),
+                ),
+            )
+
+    def log_market_snapshot(self, snapshot: MarketSnapshot) -> None:
+        payload = asdict(snapshot)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO market_snapshots (
+                    snapshot_id, created_at, primary_symbol, base_timeframe,
+                    quality_score, is_usable, payload_json, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.snapshot_id,
+                    snapshot.created_at,
+                    snapshot.primary_symbol,
+                    snapshot.base_timeframe,
+                    snapshot.quality.score,
+                    int(snapshot.quality.is_usable),
+                    self._json(payload),
+                    SCHEMA_VERSION,
                 ),
             )
 
