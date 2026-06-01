@@ -94,6 +94,8 @@ Answers:
 - Is liquidity persistent or spoof-like?
 - Is data quality good enough?
 
+Runtime v0 builds `StateMatrix` after the primary matrix. It summarizes data quality, matrix tension/recheck reasons and orderbook availability from the current `MarketSnapshot`. This is a trust/context layer only; it does not choose a market action.
+
 ## Important separation
 
 - `probability`: chance of scenario/zone.

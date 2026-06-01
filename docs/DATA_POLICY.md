@@ -12,6 +12,12 @@ Strategy thinks on 5m+ context. Microdata is used for confirmation and outcome r
 - Orderbook: on demand / TTL / rate-limited, not every cycle.
 - AggTrades or 1m klines: only for intrabar resolution or ambiguous shadow/real outcomes.
 
+## Orderbook policy
+
+Стакан — короткоживущий контекст ликвидности, а не основной поток данных. Обычный runtime запрашивает его через cache/TTL policy: не чаще заданного интервала, чтобы не жечь API и не превращать стакан в шумный tick stream.
+
+Для срочных расчётов допускается принудительный refresh с явной причиной: например уточнение текущей ликвидности/проскальзывания при закрытии или разборе результата. Такой запрос должен быть помечен как forced/urgent и не отменяет общий rate-limit подход для обычного контекста.
+
 ## No analyzer direct API access
 
 Analyzers must read from local caches and snapshots, not call Binance directly.

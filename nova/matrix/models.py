@@ -99,6 +99,12 @@ class ForecastMatrix:
 
 @dataclass(frozen=True)
 class StateMatrix:
+    """Context trust matrix.
+
+    It describes whether the current evidence picture is usable enough for later
+    calculators. It is not an action selector and not a trade plan.
+    """
+
     symbol: str
     cycle_id: str
     trust_score: float
@@ -106,4 +112,5 @@ class StateMatrix:
     conflict_score: float
     data_quality: float
     liquidity_state: Optional[str] = None
+    payload: Dict[str, object] = field(default_factory=dict)
     matrix_id: str = field(default_factory=lambda: new_id("STATE"))

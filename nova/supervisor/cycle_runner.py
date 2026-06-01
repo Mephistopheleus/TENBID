@@ -22,7 +22,8 @@ from nova.core.state_snapshot import StateSnapshot, StateSnapshotStage
 from nova.data.models import MarketSnapshot
 from nova.decision.trade_plan import TradePlan
 from nova.matrix.forecast_matrix import ForecastMatrixEngine
-from nova.matrix.models import ForecastMatrix
+from nova.matrix.models import ForecastMatrix, StateMatrix
+from nova.matrix.state_matrix import StateMatrixEngine
 
 
 class CycleRunner:
@@ -209,6 +210,11 @@ class CycleRunner:
             "primary_matrix_id": matrix.matrix_id,
             "primary_zone_count": len(matrix.zones),
         }
+        state_matrix = self._build_state_matrix(cycle_id, matrix, packages)
+        summary["state_matrix_id"] = state_matrix.matrix_id
+        summary["state_trust_score"] = state_matrix.trust_score
+        summary["state_liquidity_state"] = state_matrix.liquidity_state
+        summary["state_conflict_score"] = state_matrix.conflict_score
         self._record(
             Event(
                 event_type=EventTypes.ANALYSIS_PASS_COMPLETED,
@@ -243,6 +249,44 @@ class CycleRunner:
                     "contributor_count": len(matrix.contributor_ids),
                     "source_card_count": len(matrix.source_card_ids),
                     "not_trade_decision": True,
+                },
+            )
+        )
+        return matrix
+
+    def _build_state_matrix(
+        self,
+        cycle_id: str,
+        forecast_matrix: ForecastMatrix,
+        packages: List[AnalysisPackage],
+    ) -> StateMatrix:
+        state_contributions = [
+            contribution
+            for package in packages
+            for contribution in package.state_contributions
+        ]
+        matrix = StateMatrixEngine().build(
+            cycle_id=cycle_id,
+            symbol=self.config.symbol,
+            market_snapshot=self.market_snapshot,
+            forecast_matrix=forecast_matrix,
+            state_contributions=state_contributions,
+        )
+        self.history_db.log_state_matrix(matrix)
+        self._record(
+            Event(
+                event_type=EventTypes.STATE_MATRIX_BUILT,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="CycleRunner",
+                payload={
+                    "matrix_id": matrix.matrix_id,
+                    "symbol": matrix.symbol,
+                    "trust_score": matrix.trust_score,
+                    "data_quality": matrix.data_quality,
+                    "conflict_score": matrix.conflict_score,
+                    "liquidity_state": matrix.liquidity_state,
+                    "not_market_action": True,
                 },
             )
         )

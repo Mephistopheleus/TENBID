@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 from nova.data.binance_rest import BinanceRestClient
 from nova.data.candle_cache import CandleCache
 from nova.data.models import Candle, CandleSeries, DataQualityReport, MarketSnapshot, OrderbookSnapshot
+from nova.data.orderbook_cache import RateLimitedOrderbookCache
 from nova.data.reconciliation import TimeframeReconciler
 from nova.data.synthetic_tf import SyntheticTimeframeBuilder
 from nova.data.warmup import MarketDataWarmupService
@@ -48,10 +49,12 @@ class MarketSnapshotRefreshService:
         self,
         rest_client: BinanceRestClient,
         cache: CandleCache,
+        orderbook_cache: RateLimitedOrderbookCache | None = None,
         reconciler: TimeframeReconciler | None = None,
     ) -> None:
         self.rest_client = rest_client
         self.cache = cache
+        self.orderbook_cache = orderbook_cache
         self.reconciler = reconciler or TimeframeReconciler()
 
     def refresh(self, config: MarketSnapshotRefreshConfig) -> MarketSnapshotRefreshResult:
@@ -96,8 +99,26 @@ class MarketSnapshotRefreshService:
             self.cache.load_series(series)
 
         orderbook: OrderbookSnapshot | None = None
+        orderbook_metadata: Dict[str, Any] = {"requested": config.fetch_orderbook}
         if config.fetch_orderbook:
-            orderbook = self.rest_client.get_orderbook(config.symbol, limit=config.orderbook_limit)
+            if self.orderbook_cache is None:
+                orderbook = self.rest_client.get_orderbook(config.symbol, limit=config.orderbook_limit)
+                orderbook_metadata = {"requested": True, "fetched": True, "cache_used": False}
+            else:
+                orderbook_result = self.orderbook_cache.get_orderbook(
+                    self.rest_client,
+                    config.symbol,
+                    config.orderbook_limit,
+                    reason="rest_reconciliation",
+                )
+                orderbook = orderbook_result.snapshot
+                orderbook_metadata = {
+                    "requested": True,
+                    "fetched": orderbook_result.fetched,
+                    "cache_age_sec": orderbook_result.cache_age_sec,
+                    "forced": orderbook_result.forced,
+                    "reason": orderbook_result.reason,
+                }
 
         candles = {config.base_timeframe: cache_base_series, **synthetic_series}
         snapshot_quality = self._snapshot_quality(cache_quality, rest_quality, synthetic_series, stats)
@@ -122,6 +143,7 @@ class MarketSnapshotRefreshService:
                     for timeframe, series in sorted(synthetic_series.items())
                 },
                 "rest_reconciliation": stats,
+                "orderbook": orderbook_metadata,
             },
         )
         return MarketSnapshotRefreshResult(

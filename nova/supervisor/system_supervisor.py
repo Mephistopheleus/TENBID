@@ -19,6 +19,7 @@ from nova.core.safety_kernel import SafetyKernel
 from nova.data.binance_rest import BinanceRestClient, BinanceRestConfig
 from nova.data.binance_ws import BinanceWsClient, BinanceWsConfig
 from nova.data.candle_cache import CandleCache
+from nova.data.orderbook_cache import RateLimitedOrderbookCache
 from nova.data.snapshot_refresh import (
     MarketSnapshotRefreshConfig,
     MarketSnapshotRefreshResult,
@@ -46,6 +47,7 @@ class SystemSupervisor:
         event_log = EventLog(str(config.event_log_path))
         history_db = HistoryDB(config.sqlite_path)
         candle_cache = CandleCache()
+        orderbook_cache = RateLimitedOrderbookCache(ttl_sec=config.orderbook_ttl_sec)
 
         self._record(
             event_log,
@@ -102,7 +104,14 @@ class SystemSupervisor:
         warmup_error = None
         current_market_snapshot = None
         try:
-            warmup_result = self._warmup_market_data(config, run_id, event_log, history_db, candle_cache)
+            warmup_result = self._warmup_market_data(
+                config,
+                run_id,
+                event_log,
+                history_db,
+                candle_cache,
+                orderbook_cache,
+            )
             current_market_snapshot = warmup_result.snapshot
         except Exception as exc:  # noqa: BLE001 - safety path records the failure and continues to HOLD.
             warmup_error = str(exc)
@@ -125,7 +134,14 @@ class SystemSupervisor:
         if warmup_result and config.use_ws_klines and warmup_result.snapshot.quality.is_usable:
             self._run_ws_kline_runtime(config, run_id, event_log, history_db, candle_cache)
         if warmup_result and config.reconcile_enabled and warmup_result.snapshot.quality.is_usable:
-            refresh_result = self._refresh_market_snapshot(config, run_id, event_log, history_db, candle_cache)
+            refresh_result = self._refresh_market_snapshot(
+                config,
+                run_id,
+                event_log,
+                history_db,
+                candle_cache,
+                orderbook_cache,
+            )
             if refresh_result:
                 current_market_snapshot = refresh_result.snapshot
 
@@ -147,6 +163,7 @@ class SystemSupervisor:
         event_log: EventLog,
         history_db: HistoryDB,
         candle_cache: CandleCache,
+        orderbook_cache: RateLimitedOrderbookCache,
     ) -> DataWarmupResult:
         self._record(
             event_log,
@@ -173,7 +190,7 @@ class SystemSupervisor:
                 timeout_sec=config.rest_timeout_sec,
             )
         )
-        warmup = MarketDataWarmupService(rest_client, cache=candle_cache)
+        warmup = MarketDataWarmupService(rest_client, cache=candle_cache, orderbook_cache=orderbook_cache)
         result = warmup.warmup(
             DataWarmupConfig(
                 symbol=config.symbol,
@@ -238,6 +255,7 @@ class SystemSupervisor:
         event_log: EventLog,
         history_db: HistoryDB,
         candle_cache: CandleCache,
+        orderbook_cache: RateLimitedOrderbookCache,
     ) -> MarketSnapshotRefreshResult | None:
         self._record(
             event_log,
@@ -264,7 +282,7 @@ class SystemSupervisor:
             )
         )
         try:
-            result = MarketSnapshotRefreshService(rest_client, cache=candle_cache).refresh(
+            result = MarketSnapshotRefreshService(rest_client, cache=candle_cache, orderbook_cache=orderbook_cache).refresh(
                 MarketSnapshotRefreshConfig(
                     symbol=config.symbol,
                     base_timeframe=config.base_timeframe,
