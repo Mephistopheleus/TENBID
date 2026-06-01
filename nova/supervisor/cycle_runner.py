@@ -7,12 +7,14 @@ separate layer exists, the runtime finishes with a safe placeholder TradePlan.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Dict, List
 
 from nova.analyzers.contracts import AnalysisPackage
 from nova.analyzers.market_structure import MarketStructureAnalyzer
 from nova.analyzers.registry import AnalyzerRegistry
 from nova.analyzers.runner import AnalyzerRunner
+from nova.autotune.evidence_collector import EvidenceCollector
 from nova.core.config_loader import RuntimeConfig
 from nova.core.event_log import EventLog
 from nova.core.events import Event, EventTypes
@@ -22,11 +24,15 @@ from nova.core.state_snapshot import StateSnapshot, StateSnapshotStage
 from nova.data.models import MarketSnapshot
 from nova.decision.trade_calculator import TradeCalculator, TradeCalculatorConfig
 from nova.decision.trade_plan import TradePlan
+from nova.execution.exchange_executor import ExchangeExecutor
 from nova.matrix.forecast_matrix import ForecastMatrixEngine
 from nova.matrix.models import ForecastMatrix, StateMatrix
 from nova.matrix.state_matrix import StateMatrixEngine
+from nova.risk.risk_manager import RiskManager
 from nova.scenario.builder import ScenarioBuilder
 from nova.scenario.models import ScenarioBuildResult
+from nova.shadow.shadow_engine import ShadowEngine
+from nova.labs.experiment_dispatcher import ExperimentDispatcher
 
 
 class CycleRunner:
@@ -110,6 +116,7 @@ class CycleRunner:
                 },
             )
         )
+        self._run_feedback_slice(cycle_id, plan, analysis_summary)
         return plan
 
     def _create_pre_decision_state_snapshot(self, cycle_id: str) -> StateSnapshot:
@@ -378,6 +385,118 @@ class CycleRunner:
                 "scenario_build_reason": scenario_result.reason,
                 **plan.dynamics_summary,
             },
+        )
+
+    def _run_feedback_slice(self, cycle_id: str, plan: TradePlan, analysis_summary: Dict[str, Any]) -> None:
+        state_matrix = self._state_matrix_from_summary(analysis_summary)
+        risk_decision = RiskManager().evaluate(
+            plan=plan,
+            state_matrix=state_matrix,
+            profile_values=self.config.profile.values,
+            active_positions_count=0,
+        )
+        self._record(
+            Event(
+                event_type=EventTypes.RISK_DECISION_CREATED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="RiskManager",
+                payload=asdict(risk_decision),
+            )
+        )
+
+        attempt = ExchangeExecutor(self.config).execute(plan, risk_decision)
+        if attempt.request is not None:
+            self._record(
+                Event(
+                    event_type=EventTypes.EXECUTOR_REQUEST_CREATED,
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    source="ExchangeExecutor",
+                    payload=asdict(attempt.request),
+                )
+            )
+        self._record(
+            Event(
+                event_type=EventTypes.EXECUTOR_RESULT_RECORDED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="ExchangeExecutor",
+                payload=asdict(attempt.result),
+            )
+        )
+
+        shadow_request = ShadowEngine().on_trade_plan(plan, risk_decision)
+        self._record(
+            Event(
+                event_type=EventTypes.SHADOW_SCENARIO_CREATED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="ShadowEngine",
+                payload=asdict(shadow_request),
+            )
+        )
+
+        if risk_decision.warnings or attempt.result.status != "ACCEPTED":
+            lab_request = ExperimentDispatcher().dispatch(
+                {
+                    "trade_plan": plan,
+                    "source_id": attempt.result.result_id,
+                    "purpose": "risk_or_execution_warning_check",
+                }
+            )
+            self._record(
+                Event(
+                    event_type=EventTypes.LAB_EXPERIMENT_CREATED,
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    source="ExperimentDispatcher",
+                    payload=asdict(lab_request),
+                )
+            )
+
+        scenario_id = plan.dynamics_summary.get("scenario_id")
+        evidence = EvidenceCollector().collect_real_testnet(
+            profile_id=self.config.profile.profile_id,
+            parameter_snapshot=self.config.profile.values,
+            plan_id=plan.plan_id,
+            scenario_id=str(scenario_id) if scenario_id else None,
+            risk_decision_id=risk_decision.risk_decision_id,
+            executor_result_id=attempt.result.result_id,
+            observations={
+                "risk_status": risk_decision.status,
+                "risk_warnings": risk_decision.warnings,
+                "executor_status": attempt.result.status,
+                "executor_reason": attempt.result.reason,
+                "plan_decision": plan.decision,
+                "net_expected_edge_pct": plan.net_expected_edge_pct,
+                "rr_ratio": plan.rr_ratio,
+            },
+        )
+        self._record(
+            Event(
+                event_type=EventTypes.AUTOTUNE_EVIDENCE_RECORDED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="EvidenceCollector",
+                payload=asdict(evidence),
+            )
+        )
+
+    def _state_matrix_from_summary(self, analysis_summary: Dict[str, Any]) -> StateMatrix | None:
+        scenario_result = analysis_summary.get("scenario_build_result")
+        if not isinstance(scenario_result, ScenarioBuildResult) or scenario_result.candidate is None:
+            return None
+        return StateMatrix(
+            symbol=self.config.symbol,
+            cycle_id=scenario_result.candidate.cycle_id,
+            trust_score=scenario_result.candidate.trust_score,
+            volatility_state="from_runtime_summary",
+            conflict_score=float(analysis_summary.get("state_conflict_score", 0.0)),
+            data_quality=self.market_snapshot.quality.score if self.market_snapshot else 0.0,
+            liquidity_state=analysis_summary.get("state_liquidity_state"),
+            matrix_id=scenario_result.candidate.state_matrix_id,
+            payload={"reconstructed_for_risk_gate": True},
         )
 
     def _hold_reason(self, analysis_summary: Dict[str, Any]) -> tuple[str, dict[str, object]]:
