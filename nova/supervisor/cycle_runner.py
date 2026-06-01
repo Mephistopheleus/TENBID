@@ -25,14 +25,15 @@ from nova.data.models import MarketSnapshot
 from nova.decision.trade_calculator import TradeCalculator, TradeCalculatorConfig
 from nova.decision.trade_plan import TradePlan
 from nova.execution.exchange_executor import ExchangeExecutor
+from nova.labs.experiment_dispatcher import ExperimentDispatcher
 from nova.matrix.forecast_matrix import ForecastMatrixEngine
 from nova.matrix.models import ForecastMatrix, StateMatrix
 from nova.matrix.state_matrix import StateMatrixEngine
+from nova.reports.reporter import Reporter
 from nova.risk.risk_manager import RiskManager
 from nova.scenario.builder import ScenarioBuilder
 from nova.scenario.models import ScenarioBuildResult
 from nova.shadow.shadow_engine import ShadowEngine
-from nova.labs.experiment_dispatcher import ExperimentDispatcher
 
 
 class CycleRunner:
@@ -437,6 +438,7 @@ class CycleRunner:
             )
         )
 
+        lab_request = None
         if risk_decision.warnings or attempt.result.status != "ACCEPTED":
             lab_request = ExperimentDispatcher().dispatch(
                 {
@@ -480,6 +482,24 @@ class CycleRunner:
                 cycle_id=cycle_id,
                 source="EvidenceCollector",
                 payload=asdict(evidence),
+            )
+        )
+
+        execution_report = Reporter().generate_execution_report(
+            plan=plan,
+            risk_decision=risk_decision,
+            attempt=attempt,
+            shadow_request=shadow_request,
+            lab_request=lab_request,
+            autotune_evidence=evidence,
+        )
+        self._record(
+            Event(
+                event_type=EventTypes.TRADE_EXECUTION_REPORT_CREATED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="Reporter",
+                payload=execution_report,
             )
         )
 
