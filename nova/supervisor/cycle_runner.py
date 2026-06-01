@@ -20,10 +20,13 @@ from nova.core.history_db import HistoryDB
 from nova.core.ids import CYCLE, new_id
 from nova.core.state_snapshot import StateSnapshot, StateSnapshotStage
 from nova.data.models import MarketSnapshot
+from nova.decision.trade_calculator import TradeCalculator, TradeCalculatorConfig
 from nova.decision.trade_plan import TradePlan
 from nova.matrix.forecast_matrix import ForecastMatrixEngine
 from nova.matrix.models import ForecastMatrix, StateMatrix
 from nova.matrix.state_matrix import StateMatrixEngine
+from nova.scenario.builder import ScenarioBuilder
+from nova.scenario.models import ScenarioBuildResult
 
 
 class CycleRunner:
@@ -85,16 +88,7 @@ class CycleRunner:
         if self.market_snapshot is not None and self.market_snapshot.quality.is_usable:
             analysis_summary = self._run_pre_decision_analysis(cycle_id)
 
-        reason, dynamics_summary = self._hold_reason(analysis_summary)
-        plan = TradePlan(
-            decision="HOLD",
-            symbol=self.config.symbol,
-            reason=reason,
-            profile_id=self.config.profile.profile_id,
-            confidence=0.0,
-            net_expected_edge_pct=0.0,
-            dynamics_summary=dynamics_summary,
-        )
+        plan = self._calculate_trade_plan(cycle_id, analysis_summary)
         self.history_db.log_trade_plan(plan, run_id=self.run_id, cycle_id=cycle_id)
         self._record(
             Event(
@@ -108,6 +102,11 @@ class CycleRunner:
                     "symbol": plan.symbol,
                     "reason": plan.reason,
                     "profile_id": plan.profile_id,
+                    "plan_role": plan.plan_role,
+                    "forecast_matrix_id": plan.forecast_matrix_id,
+                    "state_matrix_id": plan.state_matrix_id,
+                    "net_expected_edge_pct": plan.net_expected_edge_pct,
+                    "requires_risk_review": plan.dynamics_summary.get("requires_risk_review"),
                 },
             )
         )
@@ -215,13 +214,19 @@ class CycleRunner:
         summary["state_trust_score"] = state_matrix.trust_score
         summary["state_liquidity_state"] = state_matrix.liquidity_state
         summary["state_conflict_score"] = state_matrix.conflict_score
+        scenario_result = self._build_scenario(cycle_id, matrix, state_matrix)
+        summary["scenario_status"] = scenario_result.status
+        summary["scenario_reason"] = scenario_result.reason
+        summary["scenario_id"] = scenario_result.candidate.scenario_id if scenario_result.candidate else None
+        summary["scenario_build_result"] = scenario_result
+        event_summary = self._public_analysis_summary(summary)
         self._record(
             Event(
                 event_type=EventTypes.ANALYSIS_PASS_COMPLETED,
                 run_id=self.run_id,
                 cycle_id=cycle_id,
                 source="CycleRunner",
-                payload={"stage": "RAW", "symbol": self.config.symbol, **summary},
+                payload={"stage": "RAW", "symbol": self.config.symbol, **event_summary},
             )
         )
         return summary
@@ -253,6 +258,42 @@ class CycleRunner:
             )
         )
         return matrix
+
+    def _build_scenario(
+        self,
+        cycle_id: str,
+        forecast_matrix: ForecastMatrix,
+        state_matrix: StateMatrix,
+    ) -> ScenarioBuildResult:
+        result = ScenarioBuilder().build(
+            cycle_id=cycle_id,
+            forecast_matrix=forecast_matrix,
+            state_matrix=state_matrix,
+            market_snapshot=self.market_snapshot,
+            profile_values=self.config.profile.values,
+        )
+        candidate = result.candidate
+        self._record(
+            Event(
+                event_type=EventTypes.SCENARIO_BUILT,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="CycleRunner",
+                payload={
+                    "status": result.status,
+                    "reason": result.reason,
+                    "scenario_id": candidate.scenario_id if candidate else None,
+                    "scenario_type": candidate.scenario_type if candidate else None,
+                    "forecast_matrix_id": forecast_matrix.matrix_id,
+                    "state_matrix_id": state_matrix.matrix_id,
+                    "source_zone_ids": candidate.source_zone_ids if candidate else [],
+                    "recheck_required": candidate.recheck_required if candidate else None,
+                    "not_trade_decision": True,
+                    **result.payload,
+                },
+            )
+        )
+        return result
 
     def _build_state_matrix(
         self,
@@ -292,6 +333,53 @@ class CycleRunner:
         )
         return matrix
 
+    def _calculate_trade_plan(self, cycle_id: str, analysis_summary: Dict[str, Any]) -> TradePlan:
+        reason, dynamics_summary = self._hold_reason(analysis_summary)
+        scenario_result = analysis_summary.get("scenario_build_result")
+        if not isinstance(scenario_result, ScenarioBuildResult) or scenario_result.candidate is None:
+            return TradePlan(
+                decision="HOLD",
+                symbol=self.config.symbol,
+                reason=reason,
+                profile_id=self.config.profile.profile_id,
+                confidence=0.0,
+                net_expected_edge_pct=0.0,
+                dynamics_summary=dynamics_summary,
+            )
+
+        calculator = TradeCalculator(TradeCalculatorConfig.from_profile(self.config.profile.values))
+        plan = calculator.calculate(
+            candidate=scenario_result.candidate,
+            market_snapshot=self.market_snapshot,
+            profile_id=self.config.profile.profile_id,
+        )
+        return TradePlan(
+            decision=plan.decision,
+            symbol=plan.symbol,
+            reason=plan.reason,
+            profile_id=plan.profile_id,
+            plan_role=plan.plan_role,
+            source_type=plan.source_type,
+            parent_plan_id=plan.parent_plan_id,
+            blocked_by=plan.blocked_by,
+            block_reason=plan.block_reason,
+            forecast_matrix_id=plan.forecast_matrix_id,
+            state_matrix_id=plan.state_matrix_id,
+            entry_price=plan.entry_price,
+            stop_loss=plan.stop_loss,
+            take_profit=plan.take_profit,
+            rr_ratio=plan.rr_ratio,
+            confidence=plan.confidence,
+            net_expected_edge_pct=plan.net_expected_edge_pct,
+            costs=plan.costs,
+            dynamics_summary={
+                **dynamics_summary,
+                "scenario_build_status": scenario_result.status,
+                "scenario_build_reason": scenario_result.reason,
+                **plan.dynamics_summary,
+            },
+        )
+
     def _hold_reason(self, analysis_summary: Dict[str, Any]) -> tuple[str, dict[str, object]]:
         if self.market_snapshot is None:
             reason = "Data warmup failed; analyzers and matrix were not started"
@@ -316,17 +404,35 @@ class CycleRunner:
                 },
             )
 
+        scenario_result = analysis_summary.get("scenario_build_result")
+        if isinstance(scenario_result, ScenarioBuildResult) and scenario_result.candidate is None:
+            return (
+                f"Market snapshot analyzed; no computable scenario: {scenario_result.reason}",
+                {
+                    "status": "no_computable_scenario",
+                    "snapshot_id": self.market_snapshot.snapshot_id,
+                    "quality_score": self.market_snapshot.quality.score,
+                    "quality_usable": self.market_snapshot.quality.is_usable,
+                    "candle_counts": candle_counts,
+                    "analysis_summary": self._public_analysis_summary(analysis_summary),
+                },
+            )
+
         return (
-            "Market snapshot analyzed; matrix context ready; trade decision path is not connected yet",
+            "Market snapshot analyzed; scenario calculated into TradePlan for RiskManager review",
             {
-                "status": "analysis_and_matrix_ready",
+                "status": "trade_plan_calculated_for_risk_review",
                 "snapshot_id": self.market_snapshot.snapshot_id,
                 "quality_score": self.market_snapshot.quality.score,
                 "quality_usable": self.market_snapshot.quality.is_usable,
                 "candle_counts": candle_counts,
-                "analysis_summary": analysis_summary,
+                "analysis_summary": self._public_analysis_summary(analysis_summary),
             },
         )
+
+    @staticmethod
+    def _public_analysis_summary(analysis_summary: Dict[str, Any]) -> Dict[str, Any]:
+        return {key: value for key, value in analysis_summary.items() if key != "scenario_build_result"}
 
     def _record(self, event: Event) -> None:
         self.event_log.append(event)
