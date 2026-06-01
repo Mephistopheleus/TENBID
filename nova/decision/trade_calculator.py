@@ -83,6 +83,7 @@ class TradeCalculator:
         costs = self._costs()
         gross_edge_pct = target_pct * candidate.probability
         net_edge_pct = gross_edge_pct - costs.total_cost_pct
+        effective_confidence = self._effective_confidence(candidate.confidence, candidate.trust_score)
 
         decision = CalculatedDecision.PREPARE_LONG if direction == "LONG" else CalculatedDecision.PREPARE_SHORT
         reason = "scenario_calculated_for_risk_review"
@@ -101,7 +102,7 @@ class TradeCalculator:
             stop_loss=invalidation,
             take_profit=target_price,
             rr_ratio=rr_ratio,
-            confidence=max(0.0, min(1.0, candidate.confidence * candidate.trust_score)),
+            confidence=effective_confidence,
             net_expected_edge_pct=net_edge_pct,
             costs=costs,
             dynamics_summary={
@@ -113,8 +114,10 @@ class TradeCalculator:
                 "price_area": {"low": candidate.price_low, "high": candidate.price_high},
                 "horizon_min": candidate.horizon_min,
                 "probability": candidate.probability,
-                "scenario_confidence": candidate.confidence,
-                "state_trust_score": candidate.trust_score,
+                "analyzer_probability": candidate.confidence,
+                "autotuner_trust_points": candidate.trust_score,
+                "effective_confidence": effective_confidence,
+                "effective_confidence_formula": "average(analyzer_probability, autotuner_trust_points)",
                 "gross_edge_pct": gross_edge_pct,
                 "risk_distance_pct": risk_pct,
                 "target_distance_pct": target_pct,
@@ -137,6 +140,11 @@ class TradeCalculator:
         if center < candidate.reference_price:
             return "SHORT"
         return None
+
+    @staticmethod
+    def _effective_confidence(analyzer_probability: float, autotuner_trust_points: float) -> float:
+        value = (analyzer_probability + autotuner_trust_points) / 2.0
+        return max(0.1, min(0.9, value))
 
     def _entry_price(self, reference_price: float, direction: str) -> float:
         offset = self.config.entry_offset_pct / 100.0

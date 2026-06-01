@@ -35,12 +35,7 @@ class StateMatrixEngine:
         ]
         conflict_score = max([zone.conflict_score for zone in tension_zones], default=0.0)
         recheck_reasons = sorted({reason for zone in tension_zones for reason in zone.recheck_reasons})
-        trust_score = self._trust_score(
-            data_quality=data_quality,
-            conflict_score=conflict_score,
-            liquidity_state=liquidity_state,
-            has_forecast_matrix=forecast_matrix is not None,
-        )
+        trust_score = self._trust_score()
         return StateMatrix(
             symbol=symbol.upper(),
             cycle_id=cycle_id,
@@ -57,6 +52,7 @@ class StateMatrixEngine:
                 "tension_zone_count": len(tension_zones),
                 "recheck_reasons": recheck_reasons,
                 "state_contribution_count": len(state_contributions),
+                "trust_score_semantics": "initial_context_trust_not_data_quality_and_not_trade_permission",
                 "orderbook_snapshot_id": market_snapshot.orderbook.snapshot_id
                 if market_snapshot and market_snapshot.orderbook
                 else None,
@@ -78,17 +74,5 @@ class StateMatrixEngine:
         return "orderbook_available"
 
     @staticmethod
-    def _trust_score(
-        *,
-        data_quality: float,
-        conflict_score: float,
-        liquidity_state: str,
-        has_forecast_matrix: bool,
-    ) -> float:
-        score = max(0.0, min(1.0, data_quality))
-        if not has_forecast_matrix:
-            score *= 0.5
-        if liquidity_state != "orderbook_available":
-            score *= 0.9
-        score *= max(0.0, 1.0 - max(0.0, min(1.0, conflict_score)))
-        return max(0.0, min(1.0, score))
+    def _trust_score() -> float:
+        return 0.1

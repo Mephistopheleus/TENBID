@@ -53,11 +53,18 @@ class RiskManager:
         if plan.rr_ratio is not None and plan.rr_ratio < target_rr_min:
             warnings.append("rr_below_profile_reference")
 
+        confidence_threshold = float(profile_values.get("confidence_threshold", 0.7))
+        if plan.confidence < confidence_threshold:
+            hard_blocks.append("effective_confidence_below_profile_threshold")
+
+        minimum_shadow_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
+        shadow_sample_count = int(profile_values.get("shadow_outcome_sample_count", 0))
+        if shadow_sample_count < minimum_shadow_samples:
+            hard_blocks.append("minimum_shadow_samples_not_reached")
+
         if state_matrix is None:
             warnings.append("missing_state_matrix_object")
         else:
-            if state_matrix.trust_score < float(profile_values.get("confidence_threshold", 0.0)):
-                warnings.append("state_trust_below_profile_reference")
             if state_matrix.liquidity_state != "orderbook_available":
                 warnings.append(f"liquidity_state_{state_matrix.liquidity_state}")
             if state_matrix.payload.get("recheck_reasons"):
@@ -69,15 +76,17 @@ class RiskManager:
 
         warnings = sorted(set(warnings))
         if hard_blocks:
+            hard_blocks = sorted(set(hard_blocks))
+            shadow_first = "minimum_shadow_samples_not_reached" in hard_blocks
             return RiskDecision(
                 plan_id=plan.plan_id,
-                status=RiskDecisionStatus.REJECTED,
-                reason="hard_risk_blocks_present",
+                status=RiskDecisionStatus.SHADOW_FIRST_REQUIRED if shadow_first else RiskDecisionStatus.REJECTED,
+                reason="shadow_outcome_minimum_not_reached" if shadow_first else "hard_risk_blocks_present",
                 approved_for_executor=False,
                 profile_id=plan.profile_id,
                 state_matrix_id=plan.state_matrix_id,
                 warnings=warnings,
-                hard_blocks=sorted(set(hard_blocks)),
+                hard_blocks=hard_blocks,
                 payload=self._payload(plan, state_matrix, profile_values, active_positions_count),
             )
 
@@ -110,9 +119,14 @@ class RiskManager:
             "net_expected_edge_pct": plan.net_expected_edge_pct,
             "rr_ratio": plan.rr_ratio,
             "confidence": plan.confidence,
-            "state_trust_score": state_matrix.trust_score if state_matrix else None,
+            "analyzer_probability": plan.dynamics_summary.get("analyzer_probability"),
+            "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
+            "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
+            "state_context_trust_score": state_matrix.trust_score if state_matrix else None,
             "state_liquidity_state": state_matrix.liquidity_state if state_matrix else None,
             "active_positions_count": active_positions_count,
+            "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
+            "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
             "profile_refs": {
                 "min_net_edge_pct": profile_values.get("min_net_edge_pct"),
                 "target_rr_min": profile_values.get("target_rr_min"),

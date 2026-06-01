@@ -15,6 +15,7 @@ from nova.analyzers.market_structure import MarketStructureAnalyzer
 from nova.analyzers.registry import AnalyzerRegistry
 from nova.analyzers.runner import AnalyzerRunner
 from nova.autotune.evidence_collector import EvidenceCollector
+from nova.autotune.models import AutotuneEvidenceSource
 from nova.core.config_loader import RuntimeConfig
 from nova.core.event_log import EventLog
 from nova.core.events import Event, EventTypes
@@ -458,7 +459,10 @@ class CycleRunner:
             )
 
         scenario_id = plan.dynamics_summary.get("scenario_id")
-        evidence = EvidenceCollector().collect_real_testnet(
+        executor_accepted = attempt.result.status == "ACCEPTED"
+        evidence = EvidenceCollector().collect_feedback(
+            source_type=AutotuneEvidenceSource.REAL_TESTNET if executor_accepted else AutotuneEvidenceSource.SHADOW,
+            source_weight=1.0 if executor_accepted else 0.0,
             profile_id=self.config.profile.profile_id,
             parameter_snapshot=self.config.profile.values,
             plan_id=plan.plan_id,
@@ -471,6 +475,11 @@ class CycleRunner:
                 "executor_status": attempt.result.status,
                 "executor_reason": attempt.result.reason,
                 "plan_decision": plan.decision,
+                "analyzer_probability": plan.dynamics_summary.get("analyzer_probability"),
+                "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
+                "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
+                "shadow_outcome_sample_count": self.config.profile.values.get("shadow_outcome_sample_count", 0),
+                "minimum_shadow_samples_before_execution": self.config.profile.values.get("minimum_shadow_samples_before_execution", 50),
                 "net_expected_edge_pct": plan.net_expected_edge_pct,
                 "rr_ratio": plan.rr_ratio,
             },

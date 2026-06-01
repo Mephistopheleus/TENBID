@@ -62,6 +62,7 @@ class ScenarioBuilder:
         if state_matrix.payload.get("recheck_reasons"):
             recheck_required = True
 
+        analyzer_trust_points = self._analyzer_trust_points(profile_values)
         candidate = ScenarioCandidate(
             symbol=forecast_matrix.symbol,
             cycle_id=cycle_id,
@@ -72,7 +73,7 @@ class ScenarioBuilder:
             horizon_min=zone.horizon_min,
             probability=zone.probability,
             confidence=zone.confidence,
-            trust_score=state_matrix.trust_score,
+            trust_score=analyzer_trust_points,
             forecast_matrix_id=forecast_matrix.matrix_id,
             state_matrix_id=state_matrix.matrix_id,
             source_zone_ids=[zone.zone_id],
@@ -91,6 +92,8 @@ class ScenarioBuilder:
                 "source_analysis_result_ids": zone.source_analysis_result_ids,
                 "source_card_ids": zone.source_card_ids,
                 "state_payload": state_matrix.payload,
+                "autotuner_trust_points": analyzer_trust_points,
+                "trust_points_semantics": "autotuner_points_start_minimum_until_shadow_outcomes_raise_them",
                 "profile_thresholds": {
                     "confidence_threshold": profile_values.get("confidence_threshold"),
                     "matrix_dominance_threshold": profile_values.get("matrix_dominance_threshold"),
@@ -145,6 +148,14 @@ class ScenarioBuilder:
         if isinstance(payload_value, (int, float)):
             return float(payload_value)
         return None
+
+    @staticmethod
+    def _analyzer_trust_points(profile_values: Dict[str, Any]) -> float:
+        raw = profile_values.get(
+            "market_structure_analyzer_trust_points",
+            profile_values.get("analyzer_initial_trust_points", 0.1),
+        )
+        return max(0.1, min(0.9, float(raw)))
 
     @staticmethod
     def _no_scenario(reason: str, payload: Dict[str, object] | None = None) -> ScenarioBuildResult:

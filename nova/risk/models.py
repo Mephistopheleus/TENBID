@@ -11,6 +11,7 @@ from nova.core.ids import new_id
 class RiskDecisionStatus:
     APPROVED = "APPROVED"
     APPROVED_WITH_WARNINGS = "APPROVED_WITH_WARNINGS"
+    SHADOW_FIRST_REQUIRED = "SHADOW_FIRST_REQUIRED"
     REJECTED = "REJECTED"
     REDUCED = "REDUCED"
     REQUIRES_RECHECK = "REQUIRES_RECHECK"
@@ -29,4 +30,3 @@ class RiskDecision:
     adjusted_size_factor: float = 1.0
     payload: Dict[str, object] = field(default_factory=dict)
     risk_decision_id: str = field(default_factory=lambda: new_id("RISK"))
-

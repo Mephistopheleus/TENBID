@@ -48,7 +48,7 @@ class MarketStructureAnalyzer:
         timeframe_minutes = timeframe_to_minutes(context.timeframe)
         horizon_min = timeframe_minutes * horizon_bars
         quality = min(context.market_snapshot.quality.score, series.quality.score)
-        confidence = max(0.0, min(1.0, quality * min(1.0, len(candles) / lookback)))
+        confidence = self._forecast_probability(metrics)
 
         evidence_refs = [
             EvidenceRef(
@@ -70,7 +70,8 @@ class MarketStructureAnalyzer:
             "requested_lookback_candles": lookback,
             "horizon_min": horizon_min,
             "metrics": metrics,
-            "probability_semantics": "evidence_presence_not_trade_direction",
+            "probability_semantics": "analyzer_forecast_probability_not_data_quality",
+            "confidence_semantics": "market_structure_math_only_data_quality_is_input_gate",
         }
         result = AnalysisResult(
             analyzer_name=self.manifest.name,
@@ -193,3 +194,12 @@ class MarketStructureAnalyzer:
             "range_position": max(0.0, min(1.0, range_position)),
             "recent_return_pct": ((latest.close - first_open) / first_open) * 100.0,
         }
+
+    @staticmethod
+    def _forecast_probability(metrics: Dict[str, float]) -> float:
+        range_position = max(0.0, min(1.0, metrics["range_position"]))
+        edge_pressure = abs(range_position - 0.5) * 2.0
+        range_clarity = min(max(metrics["range_width_pct"], 0.0) / 3.0, 1.0)
+        movement_strength = min(abs(metrics["recent_return_pct"]) / 2.0, 1.0)
+        score = (edge_pressure * 0.50) + (range_clarity * 0.30) + (movement_strength * 0.20)
+        return max(0.1, min(0.9, 0.1 + (score * 0.8)))
