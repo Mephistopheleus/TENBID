@@ -17,6 +17,7 @@ from nova.execution.models import ExecutionAttempt, ExecutorResultStatus
 from nova.risk.models import RiskDecision
 from nova.shadow.outcome import OutcomeResult, ResolutionMethod, ScenarioOutcome
 from nova.shadow.scenario import ScenarioRequest, ScenarioSource
+from nova.shadow.scenario_evaluator import ScenarioEvaluator
 
 
 class OutcomeRecorder:
@@ -78,27 +79,7 @@ class OutcomeRecorder:
         risk_decision: RiskDecision,
         evidence: AutotuneEvidence,
     ) -> tuple[ScenarioOutcome, Event]:
-        outcome = ScenarioOutcome(
-            scenario_id=request.scenario_id,
-            source_type=request.source_type,
-            result=OutcomeResult.PENDING,
-            gross_pnl_pct=0.0,
-            net_pnl_pct=0.0,
-            mfe_pct=0.0,
-            mae_pct=0.0,
-            duration_sec=0,
-            resolution_method=ResolutionMethod.PENDING,
-            quality=0.0,
-            planned_costs=self._planned_costs(plan),
-            actual_costs={},
-            payload={
-                **self._plan_payload(plan),
-                "evaluation_window_min": request.evaluation_window_min,
-                "parameter_variant": request.parameter_variant,
-                "tags": request.tags,
-            },
-            notes="Shadow request recorded; market-resolution engine has not resolved outcome yet.",
-        )
+        outcome = ScenarioEvaluator().evaluate(request, plan=plan)
         event = self._persist(
             outcome=outcome,
             run_id=run_id,
