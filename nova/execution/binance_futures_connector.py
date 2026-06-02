@@ -34,6 +34,12 @@ class BinanceFuturesConnector:
     def ping_signed(self) -> Dict[str, Any]:
         return self._request("GET", "/fapi/v2/account", signed=True)
 
+    def get_position_risk(self, symbol: str) -> list[Dict[str, Any]]:
+        payload = self._request("GET", "/fapi/v2/positionRisk", params={"symbol": symbol.upper()}, signed=True)
+        if isinstance(payload, list):
+            return payload
+        return [payload]
+
     def get_ticker_price(self, symbol: str) -> float:
         payload = self._request("GET", "/fapi/v1/ticker/price", params={"symbol": symbol.upper()}, signed=False)
         return float(payload["price"])
@@ -115,6 +121,17 @@ class BinanceFuturesConnector:
         if order.get("reduceOnly"):
             params["reduceOnly"] = "true"
         return self._request("POST", "/fapi/v1/order", params=params, signed=True)
+
+    def place_reduce_only_market_order(self, *, symbol: str, side: str, quantity: float | str) -> Dict[str, Any]:
+        return self.place_order(
+            {
+                "symbol": symbol.upper(),
+                "side": side.upper(),
+                "type": "MARKET",
+                "quantity": str(quantity),
+                "reduceOnly": True,
+            }
+        )
 
     def _request(
         self,

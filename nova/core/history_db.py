@@ -286,6 +286,27 @@ class HistoryDB:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS active_positions (
+                    position_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    plan_id TEXT NOT NULL,
+                    scenario_id TEXT,
+                    side TEXT NOT NULL,
+                    quantity REAL NOT NULL,
+                    entry_price REAL NOT NULL,
+                    stop_loss REAL,
+                    take_profit REAL,
+                    opened_at TEXT NOT NULL,
+                    last_seen_at TEXT,
+                    closed_at TEXT,
+                    payload_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL
+                )
+                """
+            )
             self._ensure_column(conn, "state_snapshots", "run_id", "TEXT")
             for statement in self._index_statements():
                 conn.execute(statement)
@@ -312,6 +333,7 @@ class HistoryDB:
             "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_result ON scenario_outcomes(result)",
             "CREATE INDEX IF NOT EXISTS idx_autotune_evidence_scenario ON autotune_evidence(scenario_id)",
             "CREATE INDEX IF NOT EXISTS idx_autotune_recommendations_profile ON autotune_recommendations(target_profile_id)",
+            "CREATE INDEX IF NOT EXISTS idx_active_positions_status_symbol ON active_positions(status, symbol)",
         ]
 
     def log_event(self, event: Event) -> None:
@@ -352,6 +374,64 @@ class HistoryDB:
                     plan.profile_id,
                     json.dumps(payload, ensure_ascii=False, default=str),
                 ),
+            )
+
+    def upsert_active_position(self, payload: Dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO active_positions (
+                    position_id, symbol, status, plan_id, scenario_id, side, quantity,
+                    entry_price, stop_loss, take_profit, opened_at, last_seen_at,
+                    closed_at, payload_json, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(payload["position_id"]),
+                    str(payload["symbol"]).upper(),
+                    str(payload["status"]),
+                    str(payload["plan_id"]),
+                    payload.get("scenario_id"),
+                    str(payload["side"]),
+                    float(payload["quantity"]),
+                    float(payload["entry_price"]),
+                    payload.get("stop_loss"),
+                    payload.get("take_profit"),
+                    str(payload["opened_at"]),
+                    payload.get("last_seen_at"),
+                    payload.get("closed_at"),
+                    self._json(payload),
+                    SCHEMA_VERSION,
+                ),
+            )
+
+    def active_position_records(self, symbol: str | None = None) -> List[Dict[str, Any]]:
+        query = "SELECT payload_json FROM active_positions WHERE status = 'OPEN'"
+        params: list[object] = []
+        if symbol is not None:
+            query += " AND symbol = ?"
+            params.append(symbol.upper())
+        query += " ORDER BY opened_at ASC"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
+
+    def mark_active_position_closed(self, position_id: str, *, closed_at: str, payload_extra: Dict[str, Any] | None = None) -> None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT payload_json FROM active_positions WHERE position_id = ?", (position_id,)).fetchone()
+            if row is None:
+                return
+            payload = json.loads(row["payload_json"])
+            payload.update(payload_extra or {})
+            payload["status"] = "CLOSED"
+            payload["closed_at"] = closed_at
+            conn.execute(
+                """
+                UPDATE active_positions
+                SET status = 'CLOSED', closed_at = ?, payload_json = ?
+                WHERE position_id = ?
+                """,
+                (closed_at, self._json(payload), position_id),
             )
 
     def log_market_snapshot(self, snapshot: MarketSnapshot) -> None:
@@ -750,6 +830,7 @@ class HistoryDB:
             return False
         traceable_methods = {
             ResolutionMethod.TESTNET_CLOSE,
+            ResolutionMethod.POSITION_MANAGER_CLOSE,
             ResolutionMethod.OHLC_CLEAR,
             ResolutionMethod.ONE_MINUTE_REPLAY,
             ResolutionMethod.AGGTRADES_REPLAY,

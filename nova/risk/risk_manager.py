@@ -45,15 +45,21 @@ class RiskManager:
         if active_positions_count >= max_positions:
             hard_blocks.append("max_concurrent_positions_reached")
 
+        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
         min_edge = float(profile_values.get("min_net_edge_pct", 0.0))
         if plan.net_expected_edge_pct < min_edge:
-            warnings.append("net_edge_below_profile_reference")
+            if execution_blocking_enabled:
+                hard_blocks.append("net_edge_below_profile_reference")
+            else:
+                warnings.append("net_edge_below_profile_reference")
 
         target_rr_min = float(profile_values.get("target_rr_min", 0.0))
         if plan.rr_ratio is not None and plan.rr_ratio < target_rr_min:
-            warnings.append("rr_below_profile_reference")
+            if execution_blocking_enabled:
+                hard_blocks.append("rr_below_profile_reference")
+            else:
+                warnings.append("rr_below_profile_reference")
 
-        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
         confidence_threshold = float(profile_values.get("confidence_threshold", 0.7))
         if plan.confidence < confidence_threshold:
             if execution_blocking_enabled:
@@ -70,16 +76,40 @@ class RiskManager:
                 warnings.append("minimum_shadow_samples_not_reached")
 
         if state_matrix is None:
-            warnings.append("missing_state_matrix_object")
+            if execution_blocking_enabled:
+                hard_blocks.append("missing_state_matrix_object")
+            else:
+                warnings.append("missing_state_matrix_object")
         else:
             if state_matrix.liquidity_state != "orderbook_available":
-                warnings.append(f"liquidity_state_{state_matrix.liquidity_state}")
+                reason = f"liquidity_state_{state_matrix.liquidity_state}"
+                if execution_blocking_enabled and bool(profile_values.get("orderbook_required_for_execution", True)):
+                    hard_blocks.append(reason)
+                else:
+                    warnings.append(reason)
             if state_matrix.payload.get("recheck_reasons"):
-                warnings.append("state_matrix_recheck_reasons_present")
+                if execution_blocking_enabled and bool(profile_values.get("scenario_recheck_blocks_execution", True)):
+                    hard_blocks.append("state_matrix_recheck_reasons_present")
+                else:
+                    warnings.append("state_matrix_recheck_reasons_present")
 
         calculator_flags = plan.dynamics_summary.get("calculator_flags")
         if isinstance(calculator_flags, dict):
-            warnings.extend(str(name) for name, active in calculator_flags.items() if active is True)
+            for name, active in calculator_flags.items():
+                if active is not True:
+                    continue
+                reason = str(name)
+                if reason == "requires_risk_manager_decision":
+                    continue
+                if execution_blocking_enabled and reason in {
+                    "net_edge_below_profile_reference",
+                    "rr_below_profile_reference",
+                    "risk_distance_above_profile_reference",
+                    "scenario_recheck_required",
+                }:
+                    hard_blocks.append(reason)
+                else:
+                    warnings.append(reason)
 
         warnings = sorted(set(warnings))
         if hard_blocks:

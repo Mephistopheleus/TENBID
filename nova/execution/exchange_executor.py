@@ -196,6 +196,9 @@ class ExchangeExecutor:
             return ExecutionAttempt(request=request, result=result)
 
     def _connector(self) -> BinanceFuturesConnector:
+        return self.connector()
+
+    def connector(self) -> BinanceFuturesConnector:
         section = "BINANCE_TESTNET" if self.config.trading_mode == "TESTNET" else "BINANCE_LIVE"
         base_url = self.config.secrets.get(section, "base_url", fallback=self.config.public_rest_base_url)
         if self.config.trading_mode == "TESTNET" and "binance.vision" in base_url:
@@ -211,6 +214,30 @@ class ExchangeExecutor:
                 secret_key=secret_key,
                 timeout_sec=self.config.rest_timeout_sec,
             )
+        )
+
+    def close_request_from_position(
+        self,
+        *,
+        plan: TradePlan,
+        risk_decision: RiskDecision,
+        position_side: str,
+        quantity: float,
+        reference_price: float,
+        reason: str,
+    ) -> ExecutorRequest:
+        return ExecutorRequest(
+            plan_id=plan.plan_id,
+            risk_decision_id=risk_decision.risk_decision_id,
+            symbol=plan.symbol,
+            side=position_side,
+            order_type="MARKET",
+            quantity=str(quantity),
+            notional_usdt=float(quantity) * float(reference_price or 0.0),
+            reference_price=float(reference_price or 0.0),
+            testnet_only=self.config.trading_mode == "TESTNET",
+            reduce_only=True,
+            payload={"purpose": "position_manager_close", "reason": reason},
         )
 
     def _notional_usdt(self, adjusted_size_factor: float) -> float:
@@ -243,5 +270,9 @@ class ExchangeExecutor:
             return None
 
     @staticmethod
-    def _safe_raw(raw: dict[str, object]) -> dict[str, object]:
+    def safe_raw(raw: dict[str, object]) -> dict[str, object]:
         return {key: value for key, value in raw.items() if key not in {"apiKey", "signature"}}
+
+    @staticmethod
+    def _safe_raw(raw: dict[str, object]) -> dict[str, object]:
+        return ExchangeExecutor.safe_raw(raw)

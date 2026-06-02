@@ -22,6 +22,7 @@ class TrustUpdateResult:
     flat_count: int
     proposed_trust_points: float
     reason: str
+    diagnostics: dict[str, Any] | None = None
 
 
 class TrustEngine:
@@ -44,7 +45,7 @@ class TrustEngine:
         minimum = float(profile_values.get("analyzer_initial_trust_points", 0.1))
         minimum_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
         if sample_count <= 0:
-            return TrustUpdateResult(None, 0, 0, 0, 0, current, "no_traceable_outcomes")
+            return TrustUpdateResult(None, 0, 0, 0, 0, current, "no_traceable_outcomes", {})
 
         wins = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_WIN)
         losses = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_LOSS)
@@ -52,19 +53,44 @@ class TrustEngine:
         winrate = wins / sample_count
         avg_net_pnl = sum(outcome.net_pnl_pct for outcome in samples) / sample_count
         maturity = min(1.0, sample_count / max(1, minimum_samples))
+        diagnostics = self._diagnostics(samples)
         directional_score = (winrate - 0.5) * 0.20
         pnl_score = max(-0.05, min(0.05, avg_net_pnl / 100.0))
         proposed = max(minimum, min(0.9, current + (directional_score + pnl_score) * maturity))
 
         if abs(proposed - current) < 0.005:
-            return TrustUpdateResult(None, sample_count, wins, losses, flats, proposed, "trust_delta_too_small")
+            return TrustUpdateResult(None, sample_count, wins, losses, flats, proposed, "trust_delta_too_small", diagnostics)
 
+        rr_adjustment = self._threshold_adjustment(
+            current=float(profile_values.get("target_rr_min", 1.2)),
+            winrate=winrate,
+            avg_net_pnl=avg_net_pnl,
+            low=0.8,
+            high=3.0,
+            step=0.05,
+        )
+        edge_adjustment = self._threshold_adjustment(
+            current=float(profile_values.get("min_net_edge_pct", 0.12)),
+            winrate=winrate,
+            avg_net_pnl=avg_net_pnl,
+            low=0.05,
+            high=1.0,
+            step=0.02,
+        )
+        parameter_changes: dict[str, object] = {
+            "market_structure_analyzer_trust_points": round(proposed, 4),
+            "shadow_outcome_sample_count": sample_count,
+        }
+        target_specs = ["market_structure_analyzer_trust_points", "shadow_outcome_sample_count"]
+        if rr_adjustment is not None:
+            parameter_changes["target_rr_min"] = rr_adjustment
+            target_specs.append("target_rr_min")
+        if edge_adjustment is not None:
+            parameter_changes["min_net_edge_pct"] = edge_adjustment
+            target_specs.append("min_net_edge_pct")
         recommendation = AutotuneRecommendation(
             target_profile_id=target_profile_id,
-            parameter_changes={
-                "market_structure_analyzer_trust_points": round(proposed, 4),
-                "shadow_outcome_sample_count": sample_count,
-            },
+            parameter_changes=parameter_changes,
             evidence_ids=evidence_ids or [],
             sample_size=sample_count,
             confidence=maturity,
@@ -72,10 +98,45 @@ class TrustEngine:
                 "traceable_outcome_trust_update; "
                 f"wins={wins}, losses={losses}, flats={flats}, avg_net_pnl={avg_net_pnl:.4f}, maturity={maturity:.4f}"
             ),
-            target_parameter_specs=[
-                "market_structure_analyzer_trust_points",
-                "shadow_outcome_sample_count",
-            ],
+            target_parameter_specs=target_specs,
             rollback_condition="owner_revert_or_negative_traceable_outcome_drift",
         )
-        return TrustUpdateResult(recommendation, sample_count, wins, losses, flats, proposed, "recommendation_created")
+        return TrustUpdateResult(recommendation, sample_count, wins, losses, flats, proposed, "recommendation_created", diagnostics)
+
+    @staticmethod
+    def _threshold_adjustment(
+        *,
+        current: float,
+        winrate: float,
+        avg_net_pnl: float,
+        low: float,
+        high: float,
+        step: float,
+    ) -> float | None:
+        proposed = current
+        if winrate < 0.45 or avg_net_pnl < 0.0:
+            proposed = min(high, current + step)
+        elif winrate > 0.58 and avg_net_pnl > 0.0:
+            proposed = max(low, current - step)
+        proposed = round(proposed, 4)
+        return proposed if abs(proposed - current) >= 0.0001 else None
+
+    @staticmethod
+    def _diagnostics(samples: list[ScenarioOutcome]) -> dict[str, Any]:
+        recheck = 0
+        orderbook_missing = 0
+        close_methods: dict[str, int] = {}
+        for outcome in samples:
+            payload = outcome.payload or {}
+            if payload.get("recheck_required") is True:
+                recheck += 1
+            state = payload.get("state_liquidity_state") or payload.get("liquidity_state")
+            if state and state != "orderbook_available":
+                orderbook_missing += 1
+            close_methods[outcome.resolution_method] = close_methods.get(outcome.resolution_method, 0) + 1
+        count = max(1, len(samples))
+        return {
+            "recheck_rate": recheck / count,
+            "orderbook_missing_rate": orderbook_missing / count,
+            "resolution_methods": close_methods,
+        }

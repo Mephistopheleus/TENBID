@@ -175,6 +175,71 @@ class OutcomeRecorder:
         )
         return outcome, event
 
+    def record_position_manager_close(
+        self,
+        *,
+        run_id: str,
+        cycle_id: str,
+        scenario_id: str,
+        plan: TradePlan,
+        entry_attempt: ExecutionAttempt,
+        close_attempt: ExecutionAttempt,
+        risk_decision: RiskDecision,
+        evidence: AutotuneEvidence,
+        close_reason: str,
+        position_payload: dict[str, Any],
+    ) -> tuple[ScenarioOutcome, Event]:
+        gross_pnl_pct = self._testnet_pnl_pct(plan, entry_attempt, close_attempt)
+        result = OutcomeResult.OBSERVED_FLAT
+        if gross_pnl_pct > 0:
+            result = OutcomeResult.OBSERVED_WIN
+        elif gross_pnl_pct < 0:
+            result = OutcomeResult.OBSERVED_LOSS
+        close_accepted = close_attempt.result.status == ExecutorResultStatus.ACCEPTED
+        outcome = ScenarioOutcome(
+            scenario_id=scenario_id,
+            source_type=ScenarioSource.REAL_EXECUTION,
+            result=result if close_accepted else OutcomeResult.UNRESOLVED,
+            gross_pnl_pct=gross_pnl_pct,
+            net_pnl_pct=gross_pnl_pct - float(self._planned_costs(plan).get("total_cost_pct", 0.0)),
+            mfe_pct=max(0.0, gross_pnl_pct),
+            mae_pct=min(0.0, gross_pnl_pct),
+            duration_sec=0,
+            resolution_method=ResolutionMethod.POSITION_MANAGER_CLOSE if close_accepted else ResolutionMethod.AMBIGUOUS,
+            quality=1.0 if close_accepted else 0.0,
+            planned_costs=self._planned_costs(plan),
+            actual_costs={},
+            payload={
+                **self._plan_payload(plan),
+                "entry_result_id": entry_attempt.result.result_id,
+                "entry_exchange_order_id": entry_attempt.result.exchange_order_id,
+                "entry_avg_price": entry_attempt.result.avg_price,
+                "close_result_id": close_attempt.result.result_id,
+                "close_exchange_order_id": close_attempt.result.exchange_order_id,
+                "close_avg_price": close_attempt.result.avg_price,
+                "close_status": close_attempt.result.status,
+                "close_reason": close_reason,
+                "position_manager": position_payload,
+            },
+            notes="PositionManager resolved position outcome." if close_accepted else "PositionManager close did not resolve the position outcome.",
+        )
+        event = self._persist(
+            outcome=outcome,
+            run_id=run_id,
+            cycle_id=cycle_id,
+            source="OutcomeRecorder",
+            payload_extra={
+                "plan_id": plan.plan_id,
+                "risk_decision_id": risk_decision.risk_decision_id,
+                "entry_executor_result_id": entry_attempt.result.result_id,
+                "close_executor_result_id": close_attempt.result.result_id,
+                "autotune_evidence_id": evidence.evidence_id,
+                "position_outcome_resolved": close_accepted,
+                "position_manager_close_reason": close_reason,
+            },
+        )
+        return outcome, event
+
     def _persist(
         self,
         *,
@@ -234,6 +299,8 @@ class OutcomeRecorder:
             "analyzer_probability": plan.dynamics_summary.get("analyzer_probability"),
             "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
             "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
+            "recheck_required": plan.dynamics_summary.get("recheck_required"),
+            "calculator_flags": plan.dynamics_summary.get("calculator_flags"),
         }
 
     @staticmethod

@@ -1,0 +1,843 @@
+diff --git a/config/active_profile.json b/config/active_profile.json
+index 09092b7..6a53c65 100644
+--- a/config/active_profile.json
++++ b/config/active_profile.json
+@@ -11,13 +11,22 @@
+   "sl_max_pct": 2.50,
+   "target_rr_min": 1.20,
+   "target_rr_max": 3.00,
++  "commission_pct": 0.10,
++  "spread_pct": 0.04,
++  "slippage_pct": 0.08,
+   "trailing_activation_pct": 0.50,
+   "analyzer_initial_trust_points": 0.10,
+   "market_structure_analyzer_trust_points": 0.10,
+-  "minimum_shadow_samples_before_execution": 50,
++  "minimum_shadow_samples_before_execution": 0,
+   "shadow_outcome_sample_count": 0,
+-  "execution_blocking_enabled": false,
+-  "testnet_auto_close_enabled": true,
++  "execution_blocking_enabled": true,
++  "testnet_auto_close_enabled": false,
++  "orderbook_required_for_execution": true,
++  "scenario_recheck_blocks_execution": true,
++  "position_manager_enabled": true,
++  "position_max_horizon_multiplier": 1.0,
++  "position_entry_settle_delay_sec": 1.0,
++  "trailing_giveback_pct": 0.25,
+   "orderbook_min_interval_sec": 30,
+   "native_tf_reconcile_interval_sec": 900,
+   "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION"
+diff --git a/config/base.ini b/config/base.ini
+index 100634a..8db6527 100644
+--- a/config/base.ini
++++ b/config/base.ini
+@@ -18,7 +18,7 @@ ws_loop_reconnect_backoff_sec = 1.0
+ native_tf_reconcile_enabled = true
+ reconcile_enabled = true
+ reconcile_candles = 120
+-orderbook_mode = on_demand_rate_limited
++orderbook_mode = always
+ aggtrade_replay_mode = on_demand
+ public_rest_base_url = https://testnet.binancefuture.com
+ public_ws_base_url = wss://stream.binancefuture.com/ws
+diff --git a/nova/autotune/trust_engine.py b/nova/autotune/trust_engine.py
+index 15c6450..b099ad3 100644
+--- a/nova/autotune/trust_engine.py
++++ b/nova/autotune/trust_engine.py
+@@ -22,6 +22,7 @@ class TrustUpdateResult:
+     flat_count: int
+     proposed_trust_points: float
+     reason: str
++    diagnostics: dict[str, Any] | None = None
+ 
+ 
+ class TrustEngine:
+@@ -44,7 +45,7 @@ class TrustEngine:
+         minimum = float(profile_values.get("analyzer_initial_trust_points", 0.1))
+         minimum_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
+         if sample_count <= 0:
+-            return TrustUpdateResult(None, 0, 0, 0, 0, current, "no_traceable_outcomes")
++            return TrustUpdateResult(None, 0, 0, 0, 0, current, "no_traceable_outcomes", {})
+ 
+         wins = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_WIN)
+         losses = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_LOSS)
+@@ -52,19 +53,44 @@ class TrustEngine:
+         winrate = wins / sample_count
+         avg_net_pnl = sum(outcome.net_pnl_pct for outcome in samples) / sample_count
+         maturity = min(1.0, sample_count / max(1, minimum_samples))
++        diagnostics = self._diagnostics(samples)
+         directional_score = (winrate - 0.5) * 0.20
+         pnl_score = max(-0.05, min(0.05, avg_net_pnl / 100.0))
+         proposed = max(minimum, min(0.9, current + (directional_score + pnl_score) * maturity))
+ 
+         if abs(proposed - current) < 0.005:
+-            return TrustUpdateResult(None, sample_count, wins, losses, flats, proposed, "trust_delta_too_small")
++            return TrustUpdateResult(None, sample_count, wins, losses, flats, proposed, "trust_delta_too_small", diagnostics)
+ 
++        rr_adjustment = self._threshold_adjustment(
++            current=float(profile_values.get("target_rr_min", 1.2)),
++            winrate=winrate,
++            avg_net_pnl=avg_net_pnl,
++            low=0.8,
++            high=3.0,
++            step=0.05,
++        )
++        edge_adjustment = self._threshold_adjustment(
++            current=float(profile_values.get("min_net_edge_pct", 0.12)),
++            winrate=winrate,
++            avg_net_pnl=avg_net_pnl,
++            low=0.05,
++            high=1.0,
++            step=0.02,
++        )
++        parameter_changes: dict[str, object] = {
++            "market_structure_analyzer_trust_points": round(proposed, 4),
++            "shadow_outcome_sample_count": sample_count,
++        }
++        target_specs = ["market_structure_analyzer_trust_points", "shadow_outcome_sample_count"]
++        if rr_adjustment is not None:
++            parameter_changes["target_rr_min"] = rr_adjustment
++            target_specs.append("target_rr_min")
++        if edge_adjustment is not None:
++            parameter_changes["min_net_edge_pct"] = edge_adjustment
++            target_specs.append("min_net_edge_pct")
+         recommendation = AutotuneRecommendation(
+             target_profile_id=target_profile_id,
+-            parameter_changes={
+-                "market_structure_analyzer_trust_points": round(proposed, 4),
+-                "shadow_outcome_sample_count": sample_count,
+-            },
++            parameter_changes=parameter_changes,
+             evidence_ids=evidence_ids or [],
+             sample_size=sample_count,
+             confidence=maturity,
+@@ -72,10 +98,45 @@ class TrustEngine:
+                 "traceable_outcome_trust_update; "
+                 f"wins={wins}, losses={losses}, flats={flats}, avg_net_pnl={avg_net_pnl:.4f}, maturity={maturity:.4f}"
+             ),
+-            target_parameter_specs=[
+-                "market_structure_analyzer_trust_points",
+-                "shadow_outcome_sample_count",
+-            ],
++            target_parameter_specs=target_specs,
+             rollback_condition="owner_revert_or_negative_traceable_outcome_drift",
+         )
+-        return TrustUpdateResult(recommendation, sample_count, wins, losses, flats, proposed, "recommendation_created")
++        return TrustUpdateResult(recommendation, sample_count, wins, losses, flats, proposed, "recommendation_created", diagnostics)
++
++    @staticmethod
++    def _threshold_adjustment(
++        *,
++        current: float,
++        winrate: float,
++        avg_net_pnl: float,
++        low: float,
++        high: float,
++        step: float,
++    ) -> float | None:
++        proposed = current
++        if winrate < 0.45 or avg_net_pnl < 0.0:
++            proposed = min(high, current + step)
++        elif winrate > 0.58 and avg_net_pnl > 0.0:
++            proposed = max(low, current - step)
++        proposed = round(proposed, 4)
++        return proposed if abs(proposed - current) >= 0.0001 else None
++
++    @staticmethod
++    def _diagnostics(samples: list[ScenarioOutcome]) -> dict[str, Any]:
++        recheck = 0
++        orderbook_missing = 0
++        close_methods: dict[str, int] = {}
++        for outcome in samples:
++            payload = outcome.payload or {}
++            if payload.get("recheck_required") is True:
++                recheck += 1
++            state = payload.get("state_liquidity_state") or payload.get("liquidity_state")
++            if state and state != "orderbook_available":
++                orderbook_missing += 1
++            close_methods[outcome.resolution_method] = close_methods.get(outcome.resolution_method, 0) + 1
++        count = max(1, len(samples))
++        return {
++            "recheck_rate": recheck / count,
++            "orderbook_missing_rate": orderbook_missing / count,
++            "resolution_methods": close_methods,
++        }
+diff --git a/nova/core/events.py b/nova/core/events.py
+index 4a66b56..34ddc6a 100644
+--- a/nova/core/events.py
++++ b/nova/core/events.py
+@@ -48,6 +48,7 @@ class EventTypes:
+     RISK_DECISION_CREATED = "RISK_DECISION_CREATED"
+     EXECUTOR_REQUEST_CREATED = "EXECUTOR_REQUEST_CREATED"
+     EXECUTOR_RESULT_RECORDED = "EXECUTOR_RESULT_RECORDED"
++    POSITION_MANAGER_RECORDED = "POSITION_MANAGER_RECORDED"
+     SHADOW_SCENARIO_CREATED = "SHADOW_SCENARIO_CREATED"
+     LAB_EXPERIMENT_CREATED = "LAB_EXPERIMENT_CREATED"
+     AUTOTUNE_EVIDENCE_RECORDED = "AUTOTUNE_EVIDENCE_RECORDED"
+diff --git a/nova/core/history_db.py b/nova/core/history_db.py
+index 26cbc98..3bdd77a 100644
+--- a/nova/core/history_db.py
++++ b/nova/core/history_db.py
+@@ -286,6 +286,27 @@ class HistoryDB:
+                 )
+                 """
+             )
++            conn.execute(
++                """
++                CREATE TABLE IF NOT EXISTS active_positions (
++                    position_id TEXT PRIMARY KEY,
++                    symbol TEXT NOT NULL,
++                    status TEXT NOT NULL,
++                    plan_id TEXT NOT NULL,
++                    scenario_id TEXT,
++                    side TEXT NOT NULL,
++                    quantity REAL NOT NULL,
++                    entry_price REAL NOT NULL,
++                    stop_loss REAL,
++                    take_profit REAL,
++                    opened_at TEXT NOT NULL,
++                    last_seen_at TEXT,
++                    closed_at TEXT,
++                    payload_json TEXT NOT NULL,
++                    schema_version INTEGER NOT NULL
++                )
++                """
++            )
+             self._ensure_column(conn, "state_snapshots", "run_id", "TEXT")
+             for statement in self._index_statements():
+                 conn.execute(statement)
+@@ -312,6 +333,7 @@ class HistoryDB:
+             "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_result ON scenario_outcomes(result)",
+             "CREATE INDEX IF NOT EXISTS idx_autotune_evidence_scenario ON autotune_evidence(scenario_id)",
+             "CREATE INDEX IF NOT EXISTS idx_autotune_recommendations_profile ON autotune_recommendations(target_profile_id)",
++            "CREATE INDEX IF NOT EXISTS idx_active_positions_status_symbol ON active_positions(status, symbol)",
+         ]
+ 
+     def log_event(self, event: Event) -> None:
+@@ -354,6 +376,64 @@ class HistoryDB:
+                 ),
+             )
+ 
++    def upsert_active_position(self, payload: Dict[str, Any]) -> None:
++        with self._connect() as conn:
++            conn.execute(
++                """
++                INSERT OR REPLACE INTO active_positions (
++                    position_id, symbol, status, plan_id, scenario_id, side, quantity,
++                    entry_price, stop_loss, take_profit, opened_at, last_seen_at,
++                    closed_at, payload_json, schema_version
++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++                """,
++                (
++                    str(payload["position_id"]),
++                    str(payload["symbol"]).upper(),
++                    str(payload["status"]),
++                    str(payload["plan_id"]),
++                    payload.get("scenario_id"),
++                    str(payload["side"]),
++                    float(payload["quantity"]),
++                    float(payload["entry_price"]),
++                    payload.get("stop_loss"),
++                    payload.get("take_profit"),
++                    str(payload["opened_at"]),
++                    payload.get("last_seen_at"),
++                    payload.get("closed_at"),
++                    self._json(payload),
++                    SCHEMA_VERSION,
++                ),
++            )
++
++    def active_position_records(self, symbol: str | None = None) -> List[Dict[str, Any]]:
++        query = "SELECT payload_json FROM active_positions WHERE status = 'OPEN'"
++        params: list[object] = []
++        if symbol is not None:
++            query += " AND symbol = ?"
++            params.append(symbol.upper())
++        query += " ORDER BY opened_at ASC"
++        with self._connect() as conn:
++            rows = conn.execute(query, params).fetchall()
++        return [json.loads(row["payload_json"]) for row in rows]
++
++    def mark_active_position_closed(self, position_id: str, *, closed_at: str, payload_extra: Dict[str, Any] | None = None) -> None:
++        with self._connect() as conn:
++            row = conn.execute("SELECT payload_json FROM active_positions WHERE position_id = ?", (position_id,)).fetchone()
++            if row is None:
++                return
++            payload = json.loads(row["payload_json"])
++            payload.update(payload_extra or {})
++            payload["status"] = "CLOSED"
++            payload["closed_at"] = closed_at
++            conn.execute(
++                """
++                UPDATE active_positions
++                SET status = 'CLOSED', closed_at = ?, payload_json = ?
++                WHERE position_id = ?
++                """,
++                (closed_at, self._json(payload), position_id),
++            )
++
+     def log_market_snapshot(self, snapshot: MarketSnapshot) -> None:
+         payload = asdict(snapshot)
+         with self._connect() as conn:
+@@ -750,6 +830,7 @@ class HistoryDB:
+             return False
+         traceable_methods = {
+             ResolutionMethod.TESTNET_CLOSE,
++            ResolutionMethod.POSITION_MANAGER_CLOSE,
+             ResolutionMethod.OHLC_CLEAR,
+             ResolutionMethod.ONE_MINUTE_REPLAY,
+             ResolutionMethod.AGGTRADES_REPLAY,
+diff --git a/nova/execution/binance_futures_connector.py b/nova/execution/binance_futures_connector.py
+index 59573ad..36c706b 100644
+--- a/nova/execution/binance_futures_connector.py
++++ b/nova/execution/binance_futures_connector.py
+@@ -34,6 +34,12 @@ class BinanceFuturesConnector:
+     def ping_signed(self) -> Dict[str, Any]:
+         return self._request("GET", "/fapi/v2/account", signed=True)
+ 
++    def get_position_risk(self, symbol: str) -> list[Dict[str, Any]]:
++        payload = self._request("GET", "/fapi/v2/positionRisk", params={"symbol": symbol.upper()}, signed=True)
++        if isinstance(payload, list):
++            return payload
++        return [payload]
++
+     def get_ticker_price(self, symbol: str) -> float:
+         payload = self._request("GET", "/fapi/v1/ticker/price", params={"symbol": symbol.upper()}, signed=False)
+         return float(payload["price"])
+@@ -116,6 +122,17 @@ class BinanceFuturesConnector:
+             params["reduceOnly"] = "true"
+         return self._request("POST", "/fapi/v1/order", params=params, signed=True)
+ 
++    def place_reduce_only_market_order(self, *, symbol: str, side: str, quantity: float | str) -> Dict[str, Any]:
++        return self.place_order(
++            {
++                "symbol": symbol.upper(),
++                "side": side.upper(),
++                "type": "MARKET",
++                "quantity": str(quantity),
++                "reduceOnly": True,
++            }
++        )
++
+     def _request(
+         self,
+         method: str,
+diff --git a/nova/execution/exchange_executor.py b/nova/execution/exchange_executor.py
+index 56ed4e6..fb66635 100644
+--- a/nova/execution/exchange_executor.py
++++ b/nova/execution/exchange_executor.py
+@@ -196,6 +196,9 @@ class ExchangeExecutor:
+             return ExecutionAttempt(request=request, result=result)
+ 
+     def _connector(self) -> BinanceFuturesConnector:
++        return self.connector()
++
++    def connector(self) -> BinanceFuturesConnector:
+         section = "BINANCE_TESTNET" if self.config.trading_mode == "TESTNET" else "BINANCE_LIVE"
+         base_url = self.config.secrets.get(section, "base_url", fallback=self.config.public_rest_base_url)
+         if self.config.trading_mode == "TESTNET" and "binance.vision" in base_url:
+@@ -213,6 +216,30 @@ class ExchangeExecutor:
+             )
+         )
+ 
++    def close_request_from_position(
++        self,
++        *,
++        plan: TradePlan,
++        risk_decision: RiskDecision,
++        position_side: str,
++        quantity: float,
++        reference_price: float,
++        reason: str,
++    ) -> ExecutorRequest:
++        return ExecutorRequest(
++            plan_id=plan.plan_id,
++            risk_decision_id=risk_decision.risk_decision_id,
++            symbol=plan.symbol,
++            side=position_side,
++            order_type="MARKET",
++            quantity=str(quantity),
++            notional_usdt=float(quantity) * float(reference_price or 0.0),
++            reference_price=float(reference_price or 0.0),
++            testnet_only=self.config.trading_mode == "TESTNET",
++            reduce_only=True,
++            payload={"purpose": "position_manager_close", "reason": reason},
++        )
++
+     def _notional_usdt(self, adjusted_size_factor: float) -> float:
+         fraction = float(self.config.profile.values.get("testnet_order_notional_fraction", 0.20))
+         cap = float(self.config.profile.values.get("testnet_order_notional_cap_usdt", 10.0))
+@@ -243,5 +270,9 @@ class ExchangeExecutor:
+             return None
+ 
+     @staticmethod
+-    def _safe_raw(raw: dict[str, object]) -> dict[str, object]:
++    def safe_raw(raw: dict[str, object]) -> dict[str, object]:
+         return {key: value for key, value in raw.items() if key not in {"apiKey", "signature"}}
++
++    @staticmethod
++    def _safe_raw(raw: dict[str, object]) -> dict[str, object]:
++        return ExchangeExecutor.safe_raw(raw)
+diff --git a/nova/risk/risk_manager.py b/nova/risk/risk_manager.py
+index b2b577c..bed8a5c 100644
+--- a/nova/risk/risk_manager.py
++++ b/nova/risk/risk_manager.py
+@@ -45,15 +45,21 @@ class RiskManager:
+         if active_positions_count >= max_positions:
+             hard_blocks.append("max_concurrent_positions_reached")
+ 
++        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
+         min_edge = float(profile_values.get("min_net_edge_pct", 0.0))
+         if plan.net_expected_edge_pct < min_edge:
+-            warnings.append("net_edge_below_profile_reference")
++            if execution_blocking_enabled:
++                hard_blocks.append("net_edge_below_profile_reference")
++            else:
++                warnings.append("net_edge_below_profile_reference")
+ 
+         target_rr_min = float(profile_values.get("target_rr_min", 0.0))
+         if plan.rr_ratio is not None and plan.rr_ratio < target_rr_min:
+-            warnings.append("rr_below_profile_reference")
++            if execution_blocking_enabled:
++                hard_blocks.append("rr_below_profile_reference")
++            else:
++                warnings.append("rr_below_profile_reference")
+ 
+-        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
+         confidence_threshold = float(profile_values.get("confidence_threshold", 0.7))
+         if plan.confidence < confidence_threshold:
+             if execution_blocking_enabled:
+@@ -70,16 +76,40 @@ class RiskManager:
+                 warnings.append("minimum_shadow_samples_not_reached")
+ 
+         if state_matrix is None:
+-            warnings.append("missing_state_matrix_object")
++            if execution_blocking_enabled:
++                hard_blocks.append("missing_state_matrix_object")
++            else:
++                warnings.append("missing_state_matrix_object")
+         else:
+             if state_matrix.liquidity_state != "orderbook_available":
+-                warnings.append(f"liquidity_state_{state_matrix.liquidity_state}")
++                reason = f"liquidity_state_{state_matrix.liquidity_state}"
++                if execution_blocking_enabled and bool(profile_values.get("orderbook_required_for_execution", True)):
++                    hard_blocks.append(reason)
++                else:
++                    warnings.append(reason)
+             if state_matrix.payload.get("recheck_reasons"):
+-                warnings.append("state_matrix_recheck_reasons_present")
++                if execution_blocking_enabled and bool(profile_values.get("scenario_recheck_blocks_execution", True)):
++                    hard_blocks.append("state_matrix_recheck_reasons_present")
++                else:
++                    warnings.append("state_matrix_recheck_reasons_present")
+ 
+         calculator_flags = plan.dynamics_summary.get("calculator_flags")
+         if isinstance(calculator_flags, dict):
+-            warnings.extend(str(name) for name, active in calculator_flags.items() if active is True)
++            for name, active in calculator_flags.items():
++                if active is not True:
++                    continue
++                reason = str(name)
++                if reason == "requires_risk_manager_decision":
++                    continue
++                if execution_blocking_enabled and reason in {
++                    "net_edge_below_profile_reference",
++                    "rr_below_profile_reference",
++                    "risk_distance_above_profile_reference",
++                    "scenario_recheck_required",
++                }:
++                    hard_blocks.append(reason)
++                else:
++                    warnings.append(reason)
+ 
+         warnings = sorted(set(warnings))
+         if hard_blocks:
+diff --git a/nova/shadow/outcome.py b/nova/shadow/outcome.py
+index a9d6aba..3d9844f 100644
+--- a/nova/shadow/outcome.py
++++ b/nova/shadow/outcome.py
+@@ -48,6 +48,7 @@ class ResolutionMethod:
+     PENDING = "PENDING"
+     EXECUTION_ACK = "EXECUTION_ACK"
+     TESTNET_CLOSE = "TESTNET_CLOSE"
++    POSITION_MANAGER_CLOSE = "POSITION_MANAGER_CLOSE"
+     NOT_EXECUTED = "NOT_EXECUTED"
+     OHLC_CLEAR = "OHLC_CLEAR"
+     ONE_MINUTE_REPLAY = "ONE_MINUTE_REPLAY"
+diff --git a/nova/shadow/outcome_recorder.py b/nova/shadow/outcome_recorder.py
+index 5ce841f..4296187 100644
+--- a/nova/shadow/outcome_recorder.py
++++ b/nova/shadow/outcome_recorder.py
+@@ -175,6 +175,71 @@ class OutcomeRecorder:
+         )
+         return outcome, event
+ 
++    def record_position_manager_close(
++        self,
++        *,
++        run_id: str,
++        cycle_id: str,
++        scenario_id: str,
++        plan: TradePlan,
++        entry_attempt: ExecutionAttempt,
++        close_attempt: ExecutionAttempt,
++        risk_decision: RiskDecision,
++        evidence: AutotuneEvidence,
++        close_reason: str,
++        position_payload: dict[str, Any],
++    ) -> tuple[ScenarioOutcome, Event]:
++        gross_pnl_pct = self._testnet_pnl_pct(plan, entry_attempt, close_attempt)
++        result = OutcomeResult.OBSERVED_FLAT
++        if gross_pnl_pct > 0:
++            result = OutcomeResult.OBSERVED_WIN
++        elif gross_pnl_pct < 0:
++            result = OutcomeResult.OBSERVED_LOSS
++        close_accepted = close_attempt.result.status == ExecutorResultStatus.ACCEPTED
++        outcome = ScenarioOutcome(
++            scenario_id=scenario_id,
++            source_type=ScenarioSource.REAL_EXECUTION,
++            result=result if close_accepted else OutcomeResult.UNRESOLVED,
++            gross_pnl_pct=gross_pnl_pct,
++            net_pnl_pct=gross_pnl_pct - float(self._planned_costs(plan).get("total_cost_pct", 0.0)),
++            mfe_pct=max(0.0, gross_pnl_pct),
++            mae_pct=min(0.0, gross_pnl_pct),
++            duration_sec=0,
++            resolution_method=ResolutionMethod.POSITION_MANAGER_CLOSE if close_accepted else ResolutionMethod.AMBIGUOUS,
++            quality=1.0 if close_accepted else 0.0,
++            planned_costs=self._planned_costs(plan),
++            actual_costs={},
++            payload={
++                **self._plan_payload(plan),
++                "entry_result_id": entry_attempt.result.result_id,
++                "entry_exchange_order_id": entry_attempt.result.exchange_order_id,
++                "entry_avg_price": entry_attempt.result.avg_price,
++                "close_result_id": close_attempt.result.result_id,
++                "close_exchange_order_id": close_attempt.result.exchange_order_id,
++                "close_avg_price": close_attempt.result.avg_price,
++                "close_status": close_attempt.result.status,
++                "close_reason": close_reason,
++                "position_manager": position_payload,
++            },
++            notes="PositionManager resolved position outcome." if close_accepted else "PositionManager close did not resolve the position outcome.",
++        )
++        event = self._persist(
++            outcome=outcome,
++            run_id=run_id,
++            cycle_id=cycle_id,
++            source="OutcomeRecorder",
++            payload_extra={
++                "plan_id": plan.plan_id,
++                "risk_decision_id": risk_decision.risk_decision_id,
++                "entry_executor_result_id": entry_attempt.result.result_id,
++                "close_executor_result_id": close_attempt.result.result_id,
++                "autotune_evidence_id": evidence.evidence_id,
++                "position_outcome_resolved": close_accepted,
++                "position_manager_close_reason": close_reason,
++            },
++        )
++        return outcome, event
++
+     def _persist(
+         self,
+         *,
+@@ -234,6 +299,8 @@ class OutcomeRecorder:
+             "analyzer_probability": plan.dynamics_summary.get("analyzer_probability"),
+             "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
+             "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
++            "recheck_required": plan.dynamics_summary.get("recheck_required"),
++            "calculator_flags": plan.dynamics_summary.get("calculator_flags"),
+         }
+ 
+     @staticmethod
+diff --git a/nova/supervisor/cycle_runner.py b/nova/supervisor/cycle_runner.py
+index d4e6729..09c0218 100644
+--- a/nova/supervisor/cycle_runner.py
++++ b/nova/supervisor/cycle_runner.py
+@@ -35,12 +35,14 @@ from nova.data.models import MarketSnapshot
+ from nova.decision.trade_calculator import TradeCalculator, TradeCalculatorConfig
+ from nova.decision.trade_plan import TradePlan
+ from nova.execution.exchange_executor import ExchangeExecutor
++from nova.execution.position_manager import PositionManager
+ from nova.labs.experiment_dispatcher import ExperimentDispatcher
+ from nova.matrix.forecast_matrix import ForecastMatrixEngine
+ from nova.matrix.models import ForecastMatrix, StateMatrix
+ from nova.matrix.state_matrix import StateMatrixEngine
+ from nova.reports.reporter import Reporter
+ from nova.risk.risk_manager import RiskManager
++from nova.risk.models import RiskDecision
+ from nova.scenario.builder import ScenarioBuilder
+ from nova.scenario.models import ScenarioBuildResult
+ from nova.shadow.shadow_engine import ShadowEngine
+@@ -416,11 +418,53 @@ class CycleRunner:
+     def _run_feedback_slice(self, cycle_id: str, plan: TradePlan, analysis_summary: Dict[str, Any]) -> None:
+         state_matrix = self._state_matrix_from_summary(analysis_summary)
+         profile_values = self._profile_values_with_outcome_count()
++        pre_risk_position = None
++        active_positions_count = 0
++        position_manager = None
++        if bool(profile_values.get("position_manager_enabled", True)):
++            position_manager = PositionManager(self.config, history_db=self.history_db)
++            for management in position_manager.manage_open_records(
++                risk_decision=self._position_management_risk_decision(plan, state_matrix, profile_values)
++            ):
++                self._record_position_management(cycle_id, management)
++            try:
++                pre_risk_position = position_manager.current_position(plan.symbol)
++                active_positions_count = 1 if pre_risk_position is not None else 0
++                self._record(
++                    Event(
++                        event_type=EventTypes.POSITION_MANAGER_RECORDED,
++                        run_id=self.run_id,
++                        cycle_id=cycle_id,
++                        source="PositionManager",
++                        payload={
++                            "status": "PRE_RISK_POSITION_CHECK",
++                            "active_positions_count": active_positions_count,
++                            "position": PositionManager._position_payload(plan, pre_risk_position)
++                            if pre_risk_position is not None
++                            else None,
++                        },
++                    )
++                )
++            except Exception as exc:  # noqa: BLE001 - position visibility failure must stop execution, not the cycle.
++                active_positions_count = int(profile_values.get("max_concurrent_positions", 1))
++                self._record(
++                    Event(
++                        event_type=EventTypes.POSITION_MANAGER_RECORDED,
++                        run_id=self.run_id,
++                        cycle_id=cycle_id,
++                        source="PositionManager",
++                        payload={
++                            "status": "PRE_RISK_POSITION_CHECK_FAILED",
++                            "error": str(exc),
++                            "active_positions_count_assumed": active_positions_count,
++                        },
++                    )
++                )
+         risk_decision = RiskManager().evaluate(
+             plan=plan,
+             state_matrix=state_matrix,
+             profile_values=profile_values,
+-            active_positions_count=0,
++            active_positions_count=active_positions_count,
+         )
+         self._record(
+             Event(
+@@ -456,6 +500,57 @@ class CycleRunner:
+ 
+         executor_accepted = attempt.result.status == "ACCEPTED"
+         close_attempt = None
++        position_management = None
++        if executor_accepted:
++            position_manager = position_manager or PositionManager(self.config, history_db=self.history_db)
++            position_management = position_manager.manage_after_entry(
++                plan=plan,
++                entry_attempt=attempt,
++                risk_decision=risk_decision,
++            )
++            if position_management.position is not None:
++                position_management = self._with_registered_position(
++                    manager=position_manager,
++                    plan=plan,
++                    attempt=attempt,
++                    position_management=position_management,
++                )
++            close_attempt = position_management.close_attempt
++            self._record(
++                Event(
++                    event_type=EventTypes.POSITION_MANAGER_RECORDED,
++                    run_id=self.run_id,
++                    cycle_id=cycle_id,
++                    source="PositionManager",
++                    payload={
++                        "status": position_management.status,
++                        "reason": position_management.reason,
++                        "position": position_management.payload,
++                        "close_attempt_result_id": close_attempt.result.result_id if close_attempt else None,
++                    },
++                )
++            )
++            if close_attempt is not None:
++                if close_attempt.request is not None:
++                    self._record(
++                        Event(
++                            event_type=EventTypes.EXECUTOR_REQUEST_CREATED,
++                            run_id=self.run_id,
++                            cycle_id=cycle_id,
++                            source="PositionManager",
++                            payload=asdict(close_attempt.request),
++                        )
++                    )
++                self._record(
++                    Event(
++                        event_type=EventTypes.EXECUTOR_RESULT_RECORDED,
++                        run_id=self.run_id,
++                        cycle_id=cycle_id,
++                        source="PositionManager",
++                        payload={**asdict(close_attempt.result), "position_manager_close": True},
++                    )
++                )
++
+         if executor_accepted and bool(profile_values.get("testnet_auto_close_enabled", False)):
+             close_attempt = executor.close_reduce_only(
+                 trade_plan=plan,
+@@ -526,6 +621,7 @@ class CycleRunner:
+             observations={
+                 "risk_status": risk_decision.status,
+                 "risk_warnings": risk_decision.warnings,
++                "risk_hard_blocks": risk_decision.hard_blocks,
+                 "executor_status": attempt.result.status,
+                 "executor_reason": attempt.result.reason,
+                 "plan_decision": plan.decision,
+@@ -536,6 +632,11 @@ class CycleRunner:
+                 "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
+                 "net_expected_edge_pct": plan.net_expected_edge_pct,
+                 "rr_ratio": plan.rr_ratio,
++                "recheck_required": plan.dynamics_summary.get("recheck_required"),
++                "state_liquidity_state": state_matrix.liquidity_state if state_matrix else None,
++                "calculator_flags": plan.dynamics_summary.get("calculator_flags"),
++                "position_management_status": position_management.status if position_management else None,
++                "position_management_reason": position_management.reason if position_management else None,
+             },
+         )
+         self.history_db.log_autotune_evidence(evidence)
+@@ -561,16 +662,30 @@ class CycleRunner:
+                 evidence=evidence,
+             )
+             if close_attempt is not None:
+-                _, close_outcome_event = outcome_recorder.record_testnet_close(
+-                    run_id=self.run_id,
+-                    cycle_id=cycle_id,
+-                    scenario_id=evidence_scenario_id,
+-                    plan=plan,
+-                    entry_attempt=attempt,
+-                    close_attempt=close_attempt,
+-                    risk_decision=risk_decision,
+-                    evidence=evidence,
+-                )
++                if position_management is not None and position_management.close_attempt is close_attempt:
++                    _, close_outcome_event = outcome_recorder.record_position_manager_close(
++                        run_id=self.run_id,
++                        cycle_id=cycle_id,
++                        scenario_id=evidence_scenario_id,
++                        plan=plan,
++                        entry_attempt=attempt,
++                        close_attempt=close_attempt,
++                        risk_decision=risk_decision,
++                        evidence=evidence,
++                        close_reason=position_management.reason,
++                        position_payload=position_management.payload,
++                    )
++                else:
++                    _, close_outcome_event = outcome_recorder.record_testnet_close(
++                        run_id=self.run_id,
++                        cycle_id=cycle_id,
++                        scenario_id=evidence_scenario_id,
++                        plan=plan,
++                        entry_attempt=attempt,
++                        close_attempt=close_attempt,
++                        risk_decision=risk_decision,
++                        evidence=evidence,
++                    )
+         else:
+             _, outcome_event = outcome_recorder.record_shadow_placeholder(
+                 run_id=self.run_id,
+@@ -608,6 +723,81 @@ class CycleRunner:
+         values["shadow_outcome_sample_count"] = self.history_db.count_traceable_outcomes()
+         return values
+ 
++    def _record_position_management(self, cycle_id: str, management: object) -> None:
++        close_attempt = getattr(management, "close_attempt", None)
++        self._record(
++            Event(
++                event_type=EventTypes.POSITION_MANAGER_RECORDED,
++                run_id=self.run_id,
++                cycle_id=cycle_id,
++                source="PositionManager",
++                payload={
++                    "status": getattr(management, "status", None),
++                    "reason": getattr(management, "reason", None),
++                    "position": getattr(management, "payload", None),
++                    "close_attempt_result_id": close_attempt.result.result_id if close_attempt else None,
++                },
++            )
++        )
++        if close_attempt is None:
++            return
++        if close_attempt.request is not None:
++            self._record(
++                Event(
++                    event_type=EventTypes.EXECUTOR_REQUEST_CREATED,
++                    run_id=self.run_id,
++                    cycle_id=cycle_id,
++                    source="PositionManager",
++                    payload=asdict(close_attempt.request),
++                )
++            )
++        self._record(
++            Event(
++                event_type=EventTypes.EXECUTOR_RESULT_RECORDED,
++                run_id=self.run_id,
++                cycle_id=cycle_id,
++                source="PositionManager",
++                payload={**asdict(close_attempt.result), "position_manager_close": True},
++            )
++        )
++
++    def _position_management_risk_decision(
++        self,
++        plan: TradePlan,
++        state_matrix: StateMatrix | None,
++        profile_values: Dict[str, Any],
++    ) -> RiskDecision:
++        return RiskDecision(
++            plan_id=plan.plan_id,
++            status="POSITION_MANAGEMENT",
++            reason="manage_existing_position",
++            approved_for_executor=True,
++            profile_id=self.config.profile.profile_id,
++            state_matrix_id=state_matrix.matrix_id if state_matrix else None,
++            payload={
++                "not_new_entry": True,
++                "profile_id": self.config.profile.profile_id,
++                "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count"),
++            },
++        )
++
++    @staticmethod
++    def _with_registered_position(
++        *,
++        manager: PositionManager,
++        plan: TradePlan,
++        attempt: object,
++        position_management: object,
++    ) -> object:
++        if getattr(position_management, "status", None) != "OPEN":
++            return position_management
++        position = getattr(position_management, "position", None)
++        if position is None:
++            return position_management
++        registered = manager.register_open_position(plan=plan, position=position, entry_attempt=attempt)
++        position_management.payload.update({"active_position_record": registered})
++        return position_management
++
+     def _resolve_pending_outcomes(self, cycle_id: str) -> None:
+         resolver = ScenarioOutcomeResolver()
+         resolved_count = 0
+@@ -655,6 +845,7 @@ class CycleRunner:
+                             "sample_count": result.sample_count,
+                             "newly_resolved_count": newly_resolved_count,
+                             "proposed_trust_points": result.proposed_trust_points,
++                            "diagnostics": result.diagnostics or {},
+                         },
+                     )
+                 )
+@@ -675,6 +866,7 @@ class CycleRunner:
+                     "flats": result.flat_count,
+                     "proposed_trust_points": result.proposed_trust_points,
+                     "newly_resolved_count": newly_resolved_count,
++                    "diagnostics": result.diagnostics or {},
+                 },
+             )
+         )

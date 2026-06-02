@@ -35,12 +35,14 @@ from nova.data.models import MarketSnapshot
 from nova.decision.trade_calculator import TradeCalculator, TradeCalculatorConfig
 from nova.decision.trade_plan import TradePlan
 from nova.execution.exchange_executor import ExchangeExecutor
+from nova.execution.position_manager import PositionManager
 from nova.labs.experiment_dispatcher import ExperimentDispatcher
 from nova.matrix.forecast_matrix import ForecastMatrixEngine
 from nova.matrix.models import ForecastMatrix, StateMatrix
 from nova.matrix.state_matrix import StateMatrixEngine
 from nova.reports.reporter import Reporter
 from nova.risk.risk_manager import RiskManager
+from nova.risk.models import RiskDecision
 from nova.scenario.builder import ScenarioBuilder
 from nova.scenario.models import ScenarioBuildResult
 from nova.shadow.shadow_engine import ShadowEngine
@@ -416,11 +418,53 @@ class CycleRunner:
     def _run_feedback_slice(self, cycle_id: str, plan: TradePlan, analysis_summary: Dict[str, Any]) -> None:
         state_matrix = self._state_matrix_from_summary(analysis_summary)
         profile_values = self._profile_values_with_outcome_count()
+        pre_risk_position = None
+        active_positions_count = 0
+        position_manager = None
+        if bool(profile_values.get("position_manager_enabled", True)):
+            position_manager = PositionManager(self.config, history_db=self.history_db)
+            for management in position_manager.manage_open_records(
+                risk_decision=self._position_management_risk_decision(plan, state_matrix, profile_values)
+            ):
+                self._record_position_management(cycle_id, management)
+            try:
+                pre_risk_position = position_manager.current_position(plan.symbol)
+                active_positions_count = 1 if pre_risk_position is not None else 0
+                self._record(
+                    Event(
+                        event_type=EventTypes.POSITION_MANAGER_RECORDED,
+                        run_id=self.run_id,
+                        cycle_id=cycle_id,
+                        source="PositionManager",
+                        payload={
+                            "status": "PRE_RISK_POSITION_CHECK",
+                            "active_positions_count": active_positions_count,
+                            "position": PositionManager._position_payload(plan, pre_risk_position)
+                            if pre_risk_position is not None
+                            else None,
+                        },
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - position visibility failure must stop execution, not the cycle.
+                active_positions_count = int(profile_values.get("max_concurrent_positions", 1))
+                self._record(
+                    Event(
+                        event_type=EventTypes.POSITION_MANAGER_RECORDED,
+                        run_id=self.run_id,
+                        cycle_id=cycle_id,
+                        source="PositionManager",
+                        payload={
+                            "status": "PRE_RISK_POSITION_CHECK_FAILED",
+                            "error": str(exc),
+                            "active_positions_count_assumed": active_positions_count,
+                        },
+                    )
+                )
         risk_decision = RiskManager().evaluate(
             plan=plan,
             state_matrix=state_matrix,
             profile_values=profile_values,
-            active_positions_count=0,
+            active_positions_count=active_positions_count,
         )
         self._record(
             Event(
@@ -456,6 +500,57 @@ class CycleRunner:
 
         executor_accepted = attempt.result.status == "ACCEPTED"
         close_attempt = None
+        position_management = None
+        if executor_accepted:
+            position_manager = position_manager or PositionManager(self.config, history_db=self.history_db)
+            position_management = position_manager.manage_after_entry(
+                plan=plan,
+                entry_attempt=attempt,
+                risk_decision=risk_decision,
+            )
+            if position_management.position is not None:
+                position_management = self._with_registered_position(
+                    manager=position_manager,
+                    plan=plan,
+                    attempt=attempt,
+                    position_management=position_management,
+                )
+            close_attempt = position_management.close_attempt
+            self._record(
+                Event(
+                    event_type=EventTypes.POSITION_MANAGER_RECORDED,
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    source="PositionManager",
+                    payload={
+                        "status": position_management.status,
+                        "reason": position_management.reason,
+                        "position": position_management.payload,
+                        "close_attempt_result_id": close_attempt.result.result_id if close_attempt else None,
+                    },
+                )
+            )
+            if close_attempt is not None:
+                if close_attempt.request is not None:
+                    self._record(
+                        Event(
+                            event_type=EventTypes.EXECUTOR_REQUEST_CREATED,
+                            run_id=self.run_id,
+                            cycle_id=cycle_id,
+                            source="PositionManager",
+                            payload=asdict(close_attempt.request),
+                        )
+                    )
+                self._record(
+                    Event(
+                        event_type=EventTypes.EXECUTOR_RESULT_RECORDED,
+                        run_id=self.run_id,
+                        cycle_id=cycle_id,
+                        source="PositionManager",
+                        payload={**asdict(close_attempt.result), "position_manager_close": True},
+                    )
+                )
+
         if executor_accepted and bool(profile_values.get("testnet_auto_close_enabled", False)):
             close_attempt = executor.close_reduce_only(
                 trade_plan=plan,
@@ -526,6 +621,7 @@ class CycleRunner:
             observations={
                 "risk_status": risk_decision.status,
                 "risk_warnings": risk_decision.warnings,
+                "risk_hard_blocks": risk_decision.hard_blocks,
                 "executor_status": attempt.result.status,
                 "executor_reason": attempt.result.reason,
                 "plan_decision": plan.decision,
@@ -536,6 +632,11 @@ class CycleRunner:
                 "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
                 "net_expected_edge_pct": plan.net_expected_edge_pct,
                 "rr_ratio": plan.rr_ratio,
+                "recheck_required": plan.dynamics_summary.get("recheck_required"),
+                "state_liquidity_state": state_matrix.liquidity_state if state_matrix else None,
+                "calculator_flags": plan.dynamics_summary.get("calculator_flags"),
+                "position_management_status": position_management.status if position_management else None,
+                "position_management_reason": position_management.reason if position_management else None,
             },
         )
         self.history_db.log_autotune_evidence(evidence)
@@ -561,16 +662,30 @@ class CycleRunner:
                 evidence=evidence,
             )
             if close_attempt is not None:
-                _, close_outcome_event = outcome_recorder.record_testnet_close(
-                    run_id=self.run_id,
-                    cycle_id=cycle_id,
-                    scenario_id=evidence_scenario_id,
-                    plan=plan,
-                    entry_attempt=attempt,
-                    close_attempt=close_attempt,
-                    risk_decision=risk_decision,
-                    evidence=evidence,
-                )
+                if position_management is not None and position_management.close_attempt is close_attempt:
+                    _, close_outcome_event = outcome_recorder.record_position_manager_close(
+                        run_id=self.run_id,
+                        cycle_id=cycle_id,
+                        scenario_id=evidence_scenario_id,
+                        plan=plan,
+                        entry_attempt=attempt,
+                        close_attempt=close_attempt,
+                        risk_decision=risk_decision,
+                        evidence=evidence,
+                        close_reason=position_management.reason,
+                        position_payload=position_management.payload,
+                    )
+                else:
+                    _, close_outcome_event = outcome_recorder.record_testnet_close(
+                        run_id=self.run_id,
+                        cycle_id=cycle_id,
+                        scenario_id=evidence_scenario_id,
+                        plan=plan,
+                        entry_attempt=attempt,
+                        close_attempt=close_attempt,
+                        risk_decision=risk_decision,
+                        evidence=evidence,
+                    )
         else:
             _, outcome_event = outcome_recorder.record_shadow_placeholder(
                 run_id=self.run_id,
@@ -607,6 +722,81 @@ class CycleRunner:
         values = dict(self.config.profile.values)
         values["shadow_outcome_sample_count"] = self.history_db.count_traceable_outcomes()
         return values
+
+    def _record_position_management(self, cycle_id: str, management: object) -> None:
+        close_attempt = getattr(management, "close_attempt", None)
+        self._record(
+            Event(
+                event_type=EventTypes.POSITION_MANAGER_RECORDED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="PositionManager",
+                payload={
+                    "status": getattr(management, "status", None),
+                    "reason": getattr(management, "reason", None),
+                    "position": getattr(management, "payload", None),
+                    "close_attempt_result_id": close_attempt.result.result_id if close_attempt else None,
+                },
+            )
+        )
+        if close_attempt is None:
+            return
+        if close_attempt.request is not None:
+            self._record(
+                Event(
+                    event_type=EventTypes.EXECUTOR_REQUEST_CREATED,
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    source="PositionManager",
+                    payload=asdict(close_attempt.request),
+                )
+            )
+        self._record(
+            Event(
+                event_type=EventTypes.EXECUTOR_RESULT_RECORDED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="PositionManager",
+                payload={**asdict(close_attempt.result), "position_manager_close": True},
+            )
+        )
+
+    def _position_management_risk_decision(
+        self,
+        plan: TradePlan,
+        state_matrix: StateMatrix | None,
+        profile_values: Dict[str, Any],
+    ) -> RiskDecision:
+        return RiskDecision(
+            plan_id=plan.plan_id,
+            status="POSITION_MANAGEMENT",
+            reason="manage_existing_position",
+            approved_for_executor=True,
+            profile_id=self.config.profile.profile_id,
+            state_matrix_id=state_matrix.matrix_id if state_matrix else None,
+            payload={
+                "not_new_entry": True,
+                "profile_id": self.config.profile.profile_id,
+                "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count"),
+            },
+        )
+
+    @staticmethod
+    def _with_registered_position(
+        *,
+        manager: PositionManager,
+        plan: TradePlan,
+        attempt: object,
+        position_management: object,
+    ) -> object:
+        if getattr(position_management, "status", None) != "OPEN":
+            return position_management
+        position = getattr(position_management, "position", None)
+        if position is None:
+            return position_management
+        registered = manager.register_open_position(plan=plan, position=position, entry_attempt=attempt)
+        position_management.payload.update({"active_position_record": registered})
+        return position_management
 
     def _resolve_pending_outcomes(self, cycle_id: str) -> None:
         resolver = ScenarioOutcomeResolver()
@@ -655,6 +845,7 @@ class CycleRunner:
                             "sample_count": result.sample_count,
                             "newly_resolved_count": newly_resolved_count,
                             "proposed_trust_points": result.proposed_trust_points,
+                            "diagnostics": result.diagnostics or {},
                         },
                     )
                 )
@@ -675,6 +866,7 @@ class CycleRunner:
                     "flats": result.flat_count,
                     "proposed_trust_points": result.proposed_trust_points,
                     "newly_resolved_count": newly_resolved_count,
+                    "diagnostics": result.diagnostics or {},
                 },
             )
         )
