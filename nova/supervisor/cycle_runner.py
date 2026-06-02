@@ -24,6 +24,7 @@ from nova.analyzers.volatility_regime import VolatilityRegimeAnalyzer
 from nova.analyzers.volume_profile import VolumeProfileAnalyzer
 from nova.autotune.evidence_collector import EvidenceCollector
 from nova.autotune.models import AutotuneEvidenceSource
+from nova.autotune.profile_manager import ProfileManager
 from nova.autotune.trust_engine import TrustEngine
 from nova.core.config_loader import RuntimeConfig
 from nova.core.event_log import EventLog
@@ -851,6 +852,9 @@ class CycleRunner:
                 )
             return
         self.history_db.log_autotune_recommendation(result.recommendation)
+        apply_result = ProfileManager(self.config.root_dir / "config" / "active_profile.json").apply_recommendation(
+            result.recommendation
+        )
         self._record(
             Event(
                 event_type=EventTypes.AUTOTUNE_RECOMMENDATION_CREATED,
@@ -858,8 +862,13 @@ class CycleRunner:
                 cycle_id=cycle_id,
                 source="TrustEngine",
                 payload={
-                    "status": "recommendation_created_not_applied",
+                    "status": "recommendation_applied"
+                    if apply_result.status == "applied"
+                    else "recommendation_partially_applied"
+                    if apply_result.status == "partially_applied"
+                    else "recommendation_rejected_by_policy",
                     "recommendation": asdict(result.recommendation),
+                    "profile_apply_result": asdict(apply_result),
                     "sample_count": result.sample_count,
                     "wins": result.win_count,
                     "losses": result.loss_count,
