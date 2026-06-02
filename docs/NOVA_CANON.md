@@ -84,6 +84,23 @@ Autotuner tunes parameters inside the Canon. It must not rewrite the Canon.
 
 Autotuner may adapt thresholds, decay, confidence handling, parameter profiles and conditional behavior when lineage and evidence support that change. It must not change owner-controlled boundaries, secrets, mode selection or the system's meaning model.
 
+## Confidence and trust rule
+
+Analyzer probability is the analyzer's own mathematical forecast of its observation. It is not data quality and not trade permission.
+
+Autotuner trust points are separate from analyzer probability. They start at the minimum seed value and change only from traceable shadow, laboratory or real outcome evidence.
+
+Data quality is only a gate for whether analysis may run. It must not be converted into trade confidence.
+
+The canonical confidence flow is:
+
+- per analyzer: `effective_confidence = average(analyzer_probability, autotuner_trust_points)`;
+- for the deal: `deal_confidence = average(all effective_confidence values)`.
+
+These values must not be summed or multiplied into a fake certainty number.
+
+Until the minimum shadow / traceable outcome sample count is reached, normal executor approval is forbidden. Only explicit shadow, laboratory or owner-approved TESTNET probe paths may proceed.
+
 ## Safety and risk rule
 
 `SafetyKernel` stores non-negotiable owner boundaries.
@@ -131,4 +148,3 @@ Use these phrases as hard review checks:
 - this follows the NOVA Canon;
 - this analyzer must be adapted through the NOVA Canon;
 - this donor logic violates the NOVA Canon.
-

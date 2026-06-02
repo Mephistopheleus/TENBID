@@ -16,6 +16,8 @@
   "market_structure_analyzer_trust_points": 0.10,
   "minimum_shadow_samples_before_execution": 50,
   "shadow_outcome_sample_count": 0,
+  "execution_blocking_enabled": false,
+  "testnet_auto_close_enabled": true,
   "orderbook_min_interval_sec": 30,
   "native_tf_reconcile_interval_sec": 900,
   "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION"

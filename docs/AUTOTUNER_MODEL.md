@@ -67,6 +67,25 @@ Autotuner changes active profile parameters, not secrets, keys, mode or safety l
 
 SafetyKernel boundaries are not autotuned. Shadow and Laboratory may produce evidence that a boundary was too strict or too loose, but changing the boundary is an explicit owner/policy action.
 
+## Confidence and trust flow
+
+Autotuner must treat analyzer probability and autotuner trust as separate inputs.
+
+- Analyzer probability is the analyzer's own mathematical forecast of its observation.
+- Autotuner trust points are earned from traceable shadow, laboratory and real outcome evidence.
+- Data quality only gates whether analysis may run; it does not create trade confidence.
+
+Canonical flow:
+
+```text
+effective_confidence = average(analyzer_probability, autotuner_trust_points)
+deal_confidence = average(all effective_confidence values)
+```
+
+Do not sum or multiply these values into a fake certainty number.
+
+Until the minimum shadow / traceable outcome sample count is reached, normal executor approval stays forbidden.
+
 ## Parameter registry
 
 New modules can add new tunable parameters if they register `ParameterSpec`:

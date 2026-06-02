@@ -9,16 +9,18 @@ import json
 import sqlite3
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, List, Optional
 
 from nova.analysis.models import AnalysisResult, StateContribution
 from nova.analyzers.contracts import AnalysisPackage
+from nova.autotune.models import AutotuneEvidence, AutotuneRecommendation
 from nova.cards.models import CardDeck, EvidenceCard
 from nova.core.events import Event
 from nova.core.state_snapshot import StateSnapshot
 from nova.data.models import MarketSnapshot
 from nova.decision.trade_plan import TradePlan
 from nova.matrix.models import ForecastContribution, ForecastMatrix, MatrixZone, StateMatrix
+from nova.shadow.outcome import OutcomeResult, ResolutionMethod, ScenarioOutcome
 
 
 SCHEMA_VERSION = 1
@@ -234,6 +236,56 @@ class HistoryDB:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scenario_outcomes (
+                    outcome_id TEXT PRIMARY KEY,
+                    scenario_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    gross_pnl_pct REAL NOT NULL,
+                    net_pnl_pct REAL NOT NULL,
+                    mfe_pct REAL NOT NULL,
+                    mae_pct REAL NOT NULL,
+                    duration_sec INTEGER NOT NULL,
+                    resolution_method TEXT NOT NULL,
+                    quality REAL NOT NULL,
+                    traceable INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL
+                )
+                """
+            )
+            self._ensure_column(conn, "scenario_outcomes", "created_at", "TEXT")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS autotune_evidence (
+                    evidence_id TEXT PRIMARY KEY,
+                    source_type TEXT NOT NULL,
+                    source_weight REAL NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    plan_id TEXT,
+                    scenario_id TEXT,
+                    risk_decision_id TEXT,
+                    executor_result_id TEXT,
+                    payload_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS autotune_recommendations (
+                    recommendation_id TEXT PRIMARY KEY,
+                    target_profile_id TEXT NOT NULL,
+                    sample_size INTEGER NOT NULL,
+                    confidence REAL NOT NULL,
+                    reason TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL
+                )
+                """
+            )
             self._ensure_column(conn, "state_snapshots", "run_id", "TEXT")
             for statement in self._index_statements():
                 conn.execute(statement)
@@ -255,6 +307,11 @@ class HistoryDB:
             "CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(primary_symbol)",
             "CREATE INDEX IF NOT EXISTS idx_state_snapshots_run ON state_snapshots(run_id)",
             "CREATE INDEX IF NOT EXISTS idx_state_snapshots_cycle ON state_snapshots(cycle_id)",
+            "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_scenario ON scenario_outcomes(scenario_id)",
+            "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_traceable ON scenario_outcomes(traceable)",
+            "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_result ON scenario_outcomes(result)",
+            "CREATE INDEX IF NOT EXISTS idx_autotune_evidence_scenario ON autotune_evidence(scenario_id)",
+            "CREATE INDEX IF NOT EXISTS idx_autotune_recommendations_profile ON autotune_recommendations(target_profile_id)",
         ]
 
     def log_event(self, event: Event) -> None:
@@ -559,6 +616,168 @@ class HistoryDB:
                     SCHEMA_VERSION,
                 ),
             )
+
+    def log_scenario_outcome(self, outcome: ScenarioOutcome) -> None:
+        payload = asdict(outcome)
+        traceable = self._is_traceable_outcome(outcome)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO scenario_outcomes (
+                    outcome_id, scenario_id, source_type, result, gross_pnl_pct,
+                    net_pnl_pct, mfe_pct, mae_pct, duration_sec,
+                    resolution_method, quality, traceable, created_at,
+                    payload_json, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    outcome.outcome_id,
+                    outcome.scenario_id,
+                    outcome.source_type,
+                    outcome.result,
+                    outcome.gross_pnl_pct,
+                    outcome.net_pnl_pct,
+                    outcome.mfe_pct,
+                    outcome.mae_pct,
+                    outcome.duration_sec,
+                    outcome.resolution_method,
+                    outcome.quality,
+                    int(traceable),
+                    outcome.created_at,
+                    self._json(payload),
+                    SCHEMA_VERSION,
+                ),
+            )
+
+    def log_autotune_evidence(self, evidence: AutotuneEvidence) -> None:
+        payload = asdict(evidence)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO autotune_evidence (
+                    evidence_id, source_type, source_weight, profile_id, plan_id,
+                    scenario_id, risk_decision_id, executor_result_id,
+                    payload_json, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evidence.evidence_id,
+                    evidence.source_type,
+                    evidence.source_weight,
+                    evidence.profile_id,
+                    evidence.plan_id,
+                    evidence.scenario_id,
+                    evidence.risk_decision_id,
+                    evidence.executor_result_id,
+                    self._json(payload),
+                    SCHEMA_VERSION,
+                ),
+            )
+
+    def log_autotune_recommendation(self, recommendation: AutotuneRecommendation) -> None:
+        payload = asdict(recommendation)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO autotune_recommendations (
+                    recommendation_id, target_profile_id, sample_size,
+                    confidence, reason, payload_json, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    recommendation.recommendation_id,
+                    recommendation.target_profile_id,
+                    recommendation.sample_size,
+                    recommendation.confidence,
+                    recommendation.reason,
+                    self._json(payload),
+                    SCHEMA_VERSION,
+                ),
+            )
+
+    def traceable_outcomes(self, source_type: str | None = None, limit: int = 500) -> List[ScenarioOutcome]:
+        query = "SELECT payload_json FROM scenario_outcomes WHERE traceable = 1"
+        params: list[object] = []
+        if source_type is not None:
+            query += " AND source_type = ?"
+            params.append(source_type)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._outcome_from_payload(json.loads(row["payload_json"])) for row in rows]
+
+    def pending_outcomes(self, limit: int = 100) -> List[ScenarioOutcome]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload_json FROM scenario_outcomes
+                WHERE result = ? AND resolution_method = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (OutcomeResult.PENDING, ResolutionMethod.PENDING, limit),
+            ).fetchall()
+        return [self._outcome_from_payload(json.loads(row["payload_json"])) for row in rows]
+
+    def latest_outcome_for_scenario(self, scenario_id: str) -> Optional[ScenarioOutcome]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT payload_json FROM scenario_outcomes
+                WHERE scenario_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (scenario_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._outcome_from_payload(json.loads(row["payload_json"]))
+
+    def count_traceable_outcomes(self, source_type: str | None = None) -> int:
+        query = "SELECT COUNT(*) FROM scenario_outcomes WHERE traceable = 1"
+        params: list[str] = []
+        if source_type is not None:
+            query += " AND source_type = ?"
+            params.append(source_type)
+        with self._connect() as conn:
+            return int(conn.execute(query, params).fetchone()[0])
+
+    @staticmethod
+    def _is_traceable_outcome(outcome: ScenarioOutcome) -> bool:
+        if outcome.quality <= 0:
+            return False
+        traceable_methods = {
+            ResolutionMethod.TESTNET_CLOSE,
+            ResolutionMethod.OHLC_CLEAR,
+            ResolutionMethod.ONE_MINUTE_REPLAY,
+            ResolutionMethod.AGGTRADES_REPLAY,
+        }
+        if outcome.resolution_method not in traceable_methods:
+            return False
+        return outcome.result not in {OutcomeResult.PENDING, OutcomeResult.UNRESOLVED}
+
+    @staticmethod
+    def _outcome_from_payload(payload: Dict[str, Any]) -> ScenarioOutcome:
+        return ScenarioOutcome(
+            scenario_id=str(payload["scenario_id"]),
+            source_type=str(payload["source_type"]),
+            result=str(payload["result"]),
+            gross_pnl_pct=float(payload["gross_pnl_pct"]),
+            net_pnl_pct=float(payload["net_pnl_pct"]),
+            mfe_pct=float(payload["mfe_pct"]),
+            mae_pct=float(payload["mae_pct"]),
+            duration_sec=int(payload["duration_sec"]),
+            resolution_method=str(payload["resolution_method"]),
+            quality=float(payload["quality"]),
+            planned_costs=dict(payload.get("planned_costs") or {}),
+            actual_costs=dict(payload.get("actual_costs") or {}),
+            payload=dict(payload.get("payload") or {}),
+            outcome_id=str(payload["outcome_id"]),
+            created_at=str(payload.get("created_at") or ""),
+            notes=payload.get("notes"),
+        )
 
     @staticmethod
     def _json(payload: Dict[str, Any]) -> str:

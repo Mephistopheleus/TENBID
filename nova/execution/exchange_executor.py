@@ -100,6 +100,101 @@ class ExchangeExecutor:
             )
             return ExecutionAttempt(request=request, result=result)
 
+    def close_reduce_only(
+        self,
+        *,
+        trade_plan: TradePlan,
+        entry_attempt: ExecutionAttempt,
+        risk_decision: RiskDecision,
+    ) -> ExecutionAttempt:
+        if self.config.trading_mode != "TESTNET":
+            result = ExecutorResult(
+                request_id=None,
+                plan_id=trade_plan.plan_id,
+                status=ExecutorResultStatus.NOT_CALLED,
+                reason="reduce_only_close_allowed_only_in_testnet",
+                raw_response={"trading_mode": self.config.trading_mode},
+            )
+            return ExecutionAttempt(request=None, result=result)
+        if entry_attempt.result.status != ExecutorResultStatus.ACCEPTED:
+            result = ExecutorResult(
+                request_id=None,
+                plan_id=trade_plan.plan_id,
+                status=ExecutorResultStatus.NOT_CALLED,
+                reason="entry_order_not_accepted_for_close",
+                raw_response={"entry_status": entry_attempt.result.status},
+            )
+            return ExecutionAttempt(request=None, result=result)
+        close_side = self._opposite_side(self._side_from_plan(trade_plan))
+        quantity = entry_attempt.result.executed_qty
+        if close_side is None or quantity is None or quantity <= 0:
+            result = ExecutorResult(
+                request_id=None,
+                plan_id=trade_plan.plan_id,
+                status=ExecutorResultStatus.NOT_CALLED,
+                reason="missing_close_side_or_quantity",
+                raw_response={"close_side": close_side, "executed_qty": quantity},
+            )
+            return ExecutionAttempt(request=None, result=result)
+
+        reference_price = trade_plan.entry_price or entry_attempt.result.avg_price or 0.0
+        request = ExecutorRequest(
+            plan_id=trade_plan.plan_id,
+            risk_decision_id=risk_decision.risk_decision_id,
+            symbol=trade_plan.symbol,
+            side=close_side,
+            order_type="MARKET",
+            quantity=str(quantity),
+            notional_usdt=float(quantity) * float(reference_price or 0.0),
+            reference_price=float(reference_price or 0.0),
+            testnet_only=True,
+            reduce_only=True,
+            payload={
+                "entry_result_id": entry_attempt.result.result_id,
+                "entry_exchange_order_id": entry_attempt.result.exchange_order_id,
+                "purpose": "testnet_position_close",
+            },
+        )
+        order = {
+            "symbol": trade_plan.symbol.upper(),
+            "side": close_side,
+            "type": "MARKET",
+            "quantity": str(quantity),
+            "reduceOnly": True,
+        }
+        try:
+            raw = self._connector().place_order(order)
+            result = ExecutorResult(
+                request_id=request.request_id,
+                plan_id=trade_plan.plan_id,
+                status=ExecutorResultStatus.ACCEPTED,
+                reason="binance_reduce_only_close_accepted",
+                exchange_order_id=str(raw.get("orderId")) if raw.get("orderId") is not None else None,
+                client_order_id=raw.get("clientOrderId"),
+                executed_qty=self._float_or_none(raw.get("executedQty") or raw.get("origQty")),
+                avg_price=self._float_or_none(raw.get("avgPrice")),
+                raw_response=self._safe_raw(raw),
+            )
+            return ExecutionAttempt(request=request, result=result)
+        except Exception as exc:  # noqa: BLE001 - close attempts must be recorded, not hidden.
+            reason = "reduce_only_close_error"
+            raw_response: dict[str, object] = {"error": str(exc)}
+            try:
+                parsed = json.loads(str(exc))
+                if isinstance(parsed, dict):
+                    raw_response = parsed
+                    reason = str(parsed.get("msg") or parsed.get("code") or reason)
+            except json.JSONDecodeError:
+                pass
+            result = ExecutorResult(
+                request_id=request.request_id,
+                plan_id=trade_plan.plan_id,
+                status=ExecutorResultStatus.ERROR,
+                reason=reason,
+                raw_response=raw_response,
+            )
+            return ExecutionAttempt(request=request, result=result)
+
     def _connector(self) -> BinanceFuturesConnector:
         section = "BINANCE_TESTNET" if self.config.trading_mode == "TESTNET" else "BINANCE_LIVE"
         base_url = self.config.secrets.get(section, "base_url", fallback=self.config.public_rest_base_url)
@@ -130,6 +225,14 @@ class ExchangeExecutor:
             return "BUY"
         if plan.decision == "PREPARE_SHORT":
             return "SELL"
+        return None
+
+    @staticmethod
+    def _opposite_side(side: Optional[str]) -> Optional[str]:
+        if side == "BUY":
+            return "SELL"
+        if side == "SELL":
+            return "BUY"
         return None
 
     @staticmethod

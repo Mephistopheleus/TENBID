@@ -1,0 +1,406 @@
+diff --git a/config/active_profile.json b/config/active_profile.json
+index e19a593..f0e0345 100644
+--- a/config/active_profile.json
++++ b/config/active_profile.json
+@@ -16,6 +16,7 @@
+   "market_structure_analyzer_trust_points": 0.10,
+   "minimum_shadow_samples_before_execution": 50,
+   "shadow_outcome_sample_count": 0,
++  "execution_blocking_enabled": false,
+   "orderbook_min_interval_sec": 30,
+   "native_tf_reconcile_interval_sec": 900,
+   "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION"
+diff --git a/docs/AUTOTUNER_MODEL.md b/docs/AUTOTUNER_MODEL.md
+index aa1bdd0..68c067d 100644
+--- a/docs/AUTOTUNER_MODEL.md
++++ b/docs/AUTOTUNER_MODEL.md
+@@ -67,6 +67,25 @@ Autotuner changes active profile parameters, not secrets, keys, mode or safety l
+ 
+ SafetyKernel boundaries are not autotuned. Shadow and Laboratory may produce evidence that a boundary was too strict or too loose, but changing the boundary is an explicit owner/policy action.
+ 
++## Confidence and trust flow
++
++Autotuner must treat analyzer probability and autotuner trust as separate inputs.
++
++- Analyzer probability is the analyzer's own mathematical forecast of its observation.
++- Autotuner trust points are earned from traceable shadow, laboratory and real outcome evidence.
++- Data quality only gates whether analysis may run; it does not create trade confidence.
++
++Canonical flow:
++
++```text
++effective_confidence = average(analyzer_probability, autotuner_trust_points)
++deal_confidence = average(all effective_confidence values)
++```
++
++Do not sum or multiply these values into a fake certainty number.
++
++Until the minimum shadow / traceable outcome sample count is reached, normal executor approval stays forbidden.
++
+ ## Parameter registry
+ 
+ New modules can add new tunable parameters if they register `ParameterSpec`:
+diff --git a/docs/NOVA_CANON.md b/docs/NOVA_CANON.md
+index 8336ab2..7cc2435 100644
+--- a/docs/NOVA_CANON.md
++++ b/docs/NOVA_CANON.md
+@@ -84,6 +84,23 @@ Autotuner tunes parameters inside the Canon. It must not rewrite the Canon.
+ 
+ Autotuner may adapt thresholds, decay, confidence handling, parameter profiles and conditional behavior when lineage and evidence support that change. It must not change owner-controlled boundaries, secrets, mode selection or the system's meaning model.
+ 
++## Confidence and trust rule
++
++Analyzer probability is the analyzer's own mathematical forecast of its observation. It is not data quality and not trade permission.
++
++Autotuner trust points are separate from analyzer probability. They start at the minimum seed value and change only from traceable shadow, laboratory or real outcome evidence.
++
++Data quality is only a gate for whether analysis may run. It must not be converted into trade confidence.
++
++The canonical confidence flow is:
++
++- per analyzer: `effective_confidence = average(analyzer_probability, autotuner_trust_points)`;
++- for the deal: `deal_confidence = average(all effective_confidence values)`.
++
++These values must not be summed or multiplied into a fake certainty number.
++
++Until the minimum shadow / traceable outcome sample count is reached, normal executor approval is forbidden. Only explicit shadow, laboratory or owner-approved TESTNET probe paths may proceed.
++
+ ## Safety and risk rule
+ 
+ `SafetyKernel` stores non-negotiable owner boundaries.
+@@ -131,4 +148,3 @@ Use these phrases as hard review checks:
+ - this follows the NOVA Canon;
+ - this analyzer must be adapted through the NOVA Canon;
+ - this donor logic violates the NOVA Canon.
+-
+diff --git a/nova/core/history_db.py b/nova/core/history_db.py
+index 6e075ee..33ad934 100644
+--- a/nova/core/history_db.py
++++ b/nova/core/history_db.py
+@@ -13,12 +13,14 @@ from typing import Any, Dict, Iterable
+ 
+ from nova.analysis.models import AnalysisResult, StateContribution
+ from nova.analyzers.contracts import AnalysisPackage
++from nova.autotune.models import AutotuneEvidence
+ from nova.cards.models import CardDeck, EvidenceCard
+ from nova.core.events import Event
+ from nova.core.state_snapshot import StateSnapshot
+ from nova.data.models import MarketSnapshot
+ from nova.decision.trade_plan import TradePlan
+ from nova.matrix.models import ForecastContribution, ForecastMatrix, MatrixZone, StateMatrix
++from nova.shadow.outcome import OutcomeResult, ResolutionMethod, ScenarioOutcome
+ 
+ 
+ SCHEMA_VERSION = 1
+@@ -234,6 +236,42 @@ class HistoryDB:
+                 )
+                 """
+             )
++            conn.execute(
++                """
++                CREATE TABLE IF NOT EXISTS scenario_outcomes (
++                    outcome_id TEXT PRIMARY KEY,
++                    scenario_id TEXT NOT NULL,
++                    source_type TEXT NOT NULL,
++                    result TEXT NOT NULL,
++                    gross_pnl_pct REAL NOT NULL,
++                    net_pnl_pct REAL NOT NULL,
++                    mfe_pct REAL NOT NULL,
++                    mae_pct REAL NOT NULL,
++                    duration_sec INTEGER NOT NULL,
++                    resolution_method TEXT NOT NULL,
++                    quality REAL NOT NULL,
++                    traceable INTEGER NOT NULL,
++                    payload_json TEXT NOT NULL,
++                    schema_version INTEGER NOT NULL
++                )
++                """
++            )
++            conn.execute(
++                """
++                CREATE TABLE IF NOT EXISTS autotune_evidence (
++                    evidence_id TEXT PRIMARY KEY,
++                    source_type TEXT NOT NULL,
++                    source_weight REAL NOT NULL,
++                    profile_id TEXT NOT NULL,
++                    plan_id TEXT,
++                    scenario_id TEXT,
++                    risk_decision_id TEXT,
++                    executor_result_id TEXT,
++                    payload_json TEXT NOT NULL,
++                    schema_version INTEGER NOT NULL
++                )
++                """
++            )
+             self._ensure_column(conn, "state_snapshots", "run_id", "TEXT")
+             for statement in self._index_statements():
+                 conn.execute(statement)
+@@ -255,6 +293,9 @@ class HistoryDB:
+             "CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(primary_symbol)",
+             "CREATE INDEX IF NOT EXISTS idx_state_snapshots_run ON state_snapshots(run_id)",
+             "CREATE INDEX IF NOT EXISTS idx_state_snapshots_cycle ON state_snapshots(cycle_id)",
++            "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_scenario ON scenario_outcomes(scenario_id)",
++            "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_traceable ON scenario_outcomes(traceable)",
++            "CREATE INDEX IF NOT EXISTS idx_autotune_evidence_scenario ON autotune_evidence(scenario_id)",
+         ]
+ 
+     def log_event(self, event: Event) -> None:
+@@ -560,6 +601,84 @@ class HistoryDB:
+                 ),
+             )
+ 
++    def log_scenario_outcome(self, outcome: ScenarioOutcome) -> None:
++        payload = asdict(outcome)
++        traceable = self._is_traceable_outcome(outcome)
++        with self._connect() as conn:
++            conn.execute(
++                """
++                INSERT OR REPLACE INTO scenario_outcomes (
++                    outcome_id, scenario_id, source_type, result, gross_pnl_pct,
++                    net_pnl_pct, mfe_pct, mae_pct, duration_sec,
++                    resolution_method, quality, traceable, payload_json,
++                    schema_version
++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++                """,
++                (
++                    outcome.outcome_id,
++                    outcome.scenario_id,
++                    outcome.source_type,
++                    outcome.result,
++                    outcome.gross_pnl_pct,
++                    outcome.net_pnl_pct,
++                    outcome.mfe_pct,
++                    outcome.mae_pct,
++                    outcome.duration_sec,
++                    outcome.resolution_method,
++                    outcome.quality,
++                    int(traceable),
++                    self._json(payload),
++                    SCHEMA_VERSION,
++                ),
++            )
++
++    def log_autotune_evidence(self, evidence: AutotuneEvidence) -> None:
++        payload = asdict(evidence)
++        with self._connect() as conn:
++            conn.execute(
++                """
++                INSERT OR REPLACE INTO autotune_evidence (
++                    evidence_id, source_type, source_weight, profile_id, plan_id,
++                    scenario_id, risk_decision_id, executor_result_id,
++                    payload_json, schema_version
++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++                """,
++                (
++                    evidence.evidence_id,
++                    evidence.source_type,
++                    evidence.source_weight,
++                    evidence.profile_id,
++                    evidence.plan_id,
++                    evidence.scenario_id,
++                    evidence.risk_decision_id,
++                    evidence.executor_result_id,
++                    self._json(payload),
++                    SCHEMA_VERSION,
++                ),
++            )
++
++    def count_traceable_outcomes(self, source_type: str | None = None) -> int:
++        query = "SELECT COUNT(*) FROM scenario_outcomes WHERE traceable = 1"
++        params: list[str] = []
++        if source_type is not None:
++            query += " AND source_type = ?"
++            params.append(source_type)
++        with self._connect() as conn:
++            return int(conn.execute(query, params).fetchone()[0])
++
++    @staticmethod
++    def _is_traceable_outcome(outcome: ScenarioOutcome) -> bool:
++        if outcome.quality <= 0:
++            return False
++        traceable_methods = {
++            ResolutionMethod.OHLC_CLEAR,
++            ResolutionMethod.ONE_MINUTE_REPLAY,
++            ResolutionMethod.AGGTRADES_REPLAY,
++        }
++        if outcome.resolution_method not in traceable_methods:
++            return False
++        return outcome.result not in {OutcomeResult.PENDING, OutcomeResult.UNRESOLVED}
++
+     @staticmethod
+     def _json(payload: Dict[str, Any]) -> str:
+         return json.dumps(payload, ensure_ascii=False, default=str)
+diff --git a/nova/risk/risk_manager.py b/nova/risk/risk_manager.py
+index 20dfb87..b2b577c 100644
+--- a/nova/risk/risk_manager.py
++++ b/nova/risk/risk_manager.py
+@@ -53,14 +53,21 @@ class RiskManager:
+         if plan.rr_ratio is not None and plan.rr_ratio < target_rr_min:
+             warnings.append("rr_below_profile_reference")
+ 
++        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
+         confidence_threshold = float(profile_values.get("confidence_threshold", 0.7))
+         if plan.confidence < confidence_threshold:
+-            hard_blocks.append("effective_confidence_below_profile_threshold")
++            if execution_blocking_enabled:
++                hard_blocks.append("effective_confidence_below_profile_threshold")
++            else:
++                warnings.append("effective_confidence_below_profile_threshold")
+ 
+         minimum_shadow_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
+         shadow_sample_count = int(profile_values.get("shadow_outcome_sample_count", 0))
+         if shadow_sample_count < minimum_shadow_samples:
+-            hard_blocks.append("minimum_shadow_samples_not_reached")
++            if execution_blocking_enabled:
++                hard_blocks.append("minimum_shadow_samples_not_reached")
++            else:
++                warnings.append("minimum_shadow_samples_not_reached")
+ 
+         if state_matrix is None:
+             warnings.append("missing_state_matrix_object")
+@@ -111,6 +118,7 @@ class RiskManager:
+         profile_values: Dict[str, Any],
+         active_positions_count: int,
+     ) -> Dict[str, object]:
++        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
+         return {
+             "not_executor": True,
+             "testnet_feedback_mode": True,
+@@ -127,6 +135,7 @@ class RiskManager:
+             "active_positions_count": active_positions_count,
+             "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
+             "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
++            "execution_blocking_enabled": execution_blocking_enabled,
+             "profile_refs": {
+                 "min_net_edge_pct": profile_values.get("min_net_edge_pct"),
+                 "target_rr_min": profile_values.get("target_rr_min"),
+diff --git a/nova/shadow/outcome.py b/nova/shadow/outcome.py
+index 8d438c8..96f01f7 100644
+--- a/nova/shadow/outcome.py
++++ b/nova/shadow/outcome.py
+@@ -26,9 +26,22 @@ class ScenarioOutcome:
+     notes: Optional[str] = None
+ 
+ 
++class OutcomeResult:
++    PENDING = "PENDING"
++    UNRESOLVED = "UNRESOLVED"
++    EXECUTOR_ACCEPTED = "EXECUTOR_ACCEPTED"
++    EXECUTOR_REJECTED = "EXECUTOR_REJECTED"
++    EXECUTOR_NOT_CALLED = "EXECUTOR_NOT_CALLED"
++    OBSERVED_WIN = "OBSERVED_WIN"
++    OBSERVED_LOSS = "OBSERVED_LOSS"
++    OBSERVED_FLAT = "OBSERVED_FLAT"
++
++
+ class ResolutionMethod:
++    PENDING = "PENDING"
++    EXECUTION_ACK = "EXECUTION_ACK"
++    NOT_EXECUTED = "NOT_EXECUTED"
+     OHLC_CLEAR = "OHLC_CLEAR"
+     ONE_MINUTE_REPLAY = "ONE_MINUTE_REPLAY"
+     AGGTRADES_REPLAY = "AGGTRADES_REPLAY"
+     AMBIGUOUS = "AMBIGUOUS"
+-
+diff --git a/nova/supervisor/cycle_runner.py b/nova/supervisor/cycle_runner.py
+index 5911d37..1e0db5e 100644
+--- a/nova/supervisor/cycle_runner.py
++++ b/nova/supervisor/cycle_runner.py
+@@ -35,6 +35,7 @@ from nova.risk.risk_manager import RiskManager
+ from nova.scenario.builder import ScenarioBuilder
+ from nova.scenario.models import ScenarioBuildResult
+ from nova.shadow.shadow_engine import ShadowEngine
++from nova.shadow.outcome_recorder import OutcomeRecorder
+ 
+ 
+ class CycleRunner:
+@@ -391,10 +392,11 @@ class CycleRunner:
+ 
+     def _run_feedback_slice(self, cycle_id: str, plan: TradePlan, analysis_summary: Dict[str, Any]) -> None:
+         state_matrix = self._state_matrix_from_summary(analysis_summary)
++        profile_values = self._profile_values_with_outcome_count()
+         risk_decision = RiskManager().evaluate(
+             plan=plan,
+             state_matrix=state_matrix,
+-            profile_values=self.config.profile.values,
++            profile_values=profile_values,
+             active_positions_count=0,
+         )
+         self._record(
+@@ -458,15 +460,16 @@ class CycleRunner:
+                 )
+             )
+ 
+-        scenario_id = plan.dynamics_summary.get("scenario_id")
+         executor_accepted = attempt.result.status == "ACCEPTED"
++        plan_scenario_id = plan.dynamics_summary.get("scenario_id")
++        evidence_scenario_id = str(plan_scenario_id) if executor_accepted and plan_scenario_id else shadow_request.scenario_id
+         evidence = EvidenceCollector().collect_feedback(
+             source_type=AutotuneEvidenceSource.REAL_TESTNET if executor_accepted else AutotuneEvidenceSource.SHADOW,
+             source_weight=1.0 if executor_accepted else 0.0,
+             profile_id=self.config.profile.profile_id,
+-            parameter_snapshot=self.config.profile.values,
++            parameter_snapshot=profile_values,
+             plan_id=plan.plan_id,
+-            scenario_id=str(scenario_id) if scenario_id else None,
++            scenario_id=evidence_scenario_id,
+             risk_decision_id=risk_decision.risk_decision_id,
+             executor_result_id=attempt.result.result_id,
+             observations={
+@@ -478,12 +481,13 @@ class CycleRunner:
+                 "analyzer_probability": plan.dynamics_summary.get("analyzer_probability"),
+                 "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
+                 "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
+-                "shadow_outcome_sample_count": self.config.profile.values.get("shadow_outcome_sample_count", 0),
+-                "minimum_shadow_samples_before_execution": self.config.profile.values.get("minimum_shadow_samples_before_execution", 50),
++                "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
++                "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
+                 "net_expected_edge_pct": plan.net_expected_edge_pct,
+                 "rr_ratio": plan.rr_ratio,
+             },
+         )
++        self.history_db.log_autotune_evidence(evidence)
+         self._record(
+             Event(
+                 event_type=EventTypes.AUTOTUNE_EVIDENCE_RECORDED,
+@@ -494,6 +498,28 @@ class CycleRunner:
+             )
+         )
+ 
++        outcome_recorder = OutcomeRecorder(self.history_db)
++        if executor_accepted:
++            _, outcome_event = outcome_recorder.record_execution_ack(
++                run_id=self.run_id,
++                cycle_id=cycle_id,
++                scenario_id=evidence_scenario_id,
++                plan=plan,
++                risk_decision=risk_decision,
++                attempt=attempt,
++                evidence=evidence,
++            )
++        else:
++            _, outcome_event = outcome_recorder.record_shadow_placeholder(
++                run_id=self.run_id,
++                cycle_id=cycle_id,
++                request=shadow_request,
++                plan=plan,
++                risk_decision=risk_decision,
++                evidence=evidence,
++            )
++        self._record(outcome_event)
++
+         execution_report = Reporter().generate_execution_report(
+             plan=plan,
+             risk_decision=risk_decision,
+@@ -512,6 +538,11 @@ class CycleRunner:
+             )
+         )
+ 
++    def _profile_values_with_outcome_count(self) -> Dict[str, Any]:
++        values = dict(self.config.profile.values)
++        values["shadow_outcome_sample_count"] = self.history_db.count_traceable_outcomes()
++        return values
++
+     def _state_matrix_from_summary(self, analysis_summary: Dict[str, Any]) -> StateMatrix | None:
+         scenario_result = analysis_summary.get("scenario_build_result")
+         if not isinstance(scenario_result, ScenarioBuildResult) or scenario_result.candidate is None:

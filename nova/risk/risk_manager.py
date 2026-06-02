@@ -53,14 +53,21 @@ class RiskManager:
         if plan.rr_ratio is not None and plan.rr_ratio < target_rr_min:
             warnings.append("rr_below_profile_reference")
 
+        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
         confidence_threshold = float(profile_values.get("confidence_threshold", 0.7))
         if plan.confidence < confidence_threshold:
-            hard_blocks.append("effective_confidence_below_profile_threshold")
+            if execution_blocking_enabled:
+                hard_blocks.append("effective_confidence_below_profile_threshold")
+            else:
+                warnings.append("effective_confidence_below_profile_threshold")
 
         minimum_shadow_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
         shadow_sample_count = int(profile_values.get("shadow_outcome_sample_count", 0))
         if shadow_sample_count < minimum_shadow_samples:
-            hard_blocks.append("minimum_shadow_samples_not_reached")
+            if execution_blocking_enabled:
+                hard_blocks.append("minimum_shadow_samples_not_reached")
+            else:
+                warnings.append("minimum_shadow_samples_not_reached")
 
         if state_matrix is None:
             warnings.append("missing_state_matrix_object")
@@ -111,6 +118,7 @@ class RiskManager:
         profile_values: Dict[str, Any],
         active_positions_count: int,
     ) -> Dict[str, object]:
+        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
         return {
             "not_executor": True,
             "testnet_feedback_mode": True,
@@ -127,6 +135,7 @@ class RiskManager:
             "active_positions_count": active_positions_count,
             "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
             "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
+            "execution_blocking_enabled": execution_blocking_enabled,
             "profile_refs": {
                 "min_net_edge_pct": profile_values.get("min_net_edge_pct"),
                 "target_rr_min": profile_values.get("target_rr_min"),

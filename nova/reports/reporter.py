@@ -21,6 +21,7 @@ class Reporter:
         plan: TradePlan,
         risk_decision: RiskDecision,
         attempt: ExecutionAttempt,
+        close_attempt: Optional[ExecutionAttempt] = None,
         shadow_request: Optional[object] = None,
         lab_request: Optional[object] = None,
         autotune_evidence: Optional[object] = None,
@@ -64,6 +65,7 @@ class Reporter:
                 "avg_price": attempt.result.avg_price,
                 "raw_response": attempt.result.raw_response,
             },
+            "close_execution": self._attempt_ref(close_attempt),
             "shadow": self._request_ref(shadow_request),
             "lab": self._request_ref(lab_request),
             "autotune": {
@@ -83,4 +85,21 @@ class Reporter:
             "source_id": getattr(request, "source_id", None),
             "trade_plan_id": getattr(request, "trade_plan_id", None),
             "tags": getattr(request, "tags", None),
+        }
+
+    @staticmethod
+    def _attempt_ref(attempt: Optional[ExecutionAttempt]) -> Optional[dict[str, Any]]:
+        if attempt is None:
+            return None
+        return {
+            "request_id": attempt.request.request_id if attempt.request else None,
+            "result_id": attempt.result.result_id,
+            "status": attempt.result.status,
+            "reason": attempt.result.reason,
+            "exchange_order_id": attempt.result.exchange_order_id,
+            "client_order_id": attempt.result.client_order_id,
+            "executed_qty": attempt.result.executed_qty,
+            "avg_price": attempt.result.avg_price,
+            "reduce_only": attempt.request.reduce_only if attempt.request else None,
+            "raw_response": attempt.result.raw_response,
         }

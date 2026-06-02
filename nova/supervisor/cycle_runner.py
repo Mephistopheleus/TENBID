@@ -10,12 +10,21 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Dict, List
 
+from nova.analyzers.btc_correlation import BTCCorrelationAnalyzer
 from nova.analyzers.contracts import AnalysisPackage
+from nova.analyzers.derivatives_context import DerivativesContextAnalyzer
+from nova.analyzers.fractal_structure import FractalStructureAnalyzer
 from nova.analyzers.market_structure import MarketStructureAnalyzer
+from nova.analyzers.news_context import NewsContextAnalyzer
+from nova.analyzers.orderbook_liquidity import OrderbookLiquidityAnalyzer
+from nova.analyzers.pattern_formation import PatternFormationAnalyzer
 from nova.analyzers.registry import AnalyzerRegistry
 from nova.analyzers.runner import AnalyzerRunner
+from nova.analyzers.volatility_regime import VolatilityRegimeAnalyzer
+from nova.analyzers.volume_profile import VolumeProfileAnalyzer
 from nova.autotune.evidence_collector import EvidenceCollector
 from nova.autotune.models import AutotuneEvidenceSource
+from nova.autotune.trust_engine import TrustEngine
 from nova.core.config_loader import RuntimeConfig
 from nova.core.event_log import EventLog
 from nova.core.events import Event, EventTypes
@@ -35,6 +44,8 @@ from nova.risk.risk_manager import RiskManager
 from nova.scenario.builder import ScenarioBuilder
 from nova.scenario.models import ScenarioBuildResult
 from nova.shadow.shadow_engine import ShadowEngine
+from nova.shadow.outcome_recorder import OutcomeRecorder
+from nova.shadow.outcome_resolver import ScenarioOutcomeResolver
 
 
 class CycleRunner:
@@ -94,6 +105,7 @@ class CycleRunner:
 
         analysis_summary: Dict[str, Any] = {"status": "not_started"}
         if self.market_snapshot is not None and self.market_snapshot.quality.is_usable:
+            self._resolve_pending_outcomes(cycle_id)
             analysis_summary = self._run_pre_decision_analysis(cycle_id)
 
         plan = self._calculate_trade_plan(cycle_id, analysis_summary)
@@ -162,7 +174,19 @@ class CycleRunner:
         )
 
     def _run_pre_decision_analysis(self, cycle_id: str) -> Dict[str, Any]:
-        registry = AnalyzerRegistry([MarketStructureAnalyzer()])
+        registry = AnalyzerRegistry(
+            [
+                MarketStructureAnalyzer(),
+                VolumeProfileAnalyzer(),
+                OrderbookLiquidityAnalyzer(),
+                VolatilityRegimeAnalyzer(),
+                FractalStructureAnalyzer(),
+                PatternFormationAnalyzer(),
+                BTCCorrelationAnalyzer(),
+                DerivativesContextAnalyzer(),
+                NewsContextAnalyzer(),
+            ]
+        )
         analyzer_names = sorted(registry.manifests().keys())
         self._record(
             Event(
@@ -391,10 +415,11 @@ class CycleRunner:
 
     def _run_feedback_slice(self, cycle_id: str, plan: TradePlan, analysis_summary: Dict[str, Any]) -> None:
         state_matrix = self._state_matrix_from_summary(analysis_summary)
+        profile_values = self._profile_values_with_outcome_count()
         risk_decision = RiskManager().evaluate(
             plan=plan,
             state_matrix=state_matrix,
-            profile_values=self.config.profile.values,
+            profile_values=profile_values,
             active_positions_count=0,
         )
         self._record(
@@ -407,7 +432,8 @@ class CycleRunner:
             )
         )
 
-        attempt = ExchangeExecutor(self.config).execute(plan, risk_decision)
+        executor = ExchangeExecutor(self.config)
+        attempt = executor.execute(plan, risk_decision)
         if attempt.request is not None:
             self._record(
                 Event(
@@ -427,6 +453,34 @@ class CycleRunner:
                 payload=asdict(attempt.result),
             )
         )
+
+        executor_accepted = attempt.result.status == "ACCEPTED"
+        close_attempt = None
+        if executor_accepted and bool(profile_values.get("testnet_auto_close_enabled", False)):
+            close_attempt = executor.close_reduce_only(
+                trade_plan=plan,
+                entry_attempt=attempt,
+                risk_decision=risk_decision,
+            )
+            if close_attempt.request is not None:
+                self._record(
+                    Event(
+                        event_type=EventTypes.EXECUTOR_REQUEST_CREATED,
+                        run_id=self.run_id,
+                        cycle_id=cycle_id,
+                        source="ExchangeExecutor",
+                        payload=asdict(close_attempt.request),
+                    )
+                )
+            self._record(
+                Event(
+                    event_type=EventTypes.EXECUTOR_RESULT_RECORDED,
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    source="ExchangeExecutor",
+                    payload={**asdict(close_attempt.result), "close_attempt": True},
+                )
+            )
 
         shadow_request = ShadowEngine().on_trade_plan(plan, risk_decision)
         self._record(
@@ -458,15 +512,15 @@ class CycleRunner:
                 )
             )
 
-        scenario_id = plan.dynamics_summary.get("scenario_id")
-        executor_accepted = attempt.result.status == "ACCEPTED"
+        plan_scenario_id = plan.dynamics_summary.get("scenario_id")
+        evidence_scenario_id = str(plan_scenario_id) if executor_accepted and plan_scenario_id else shadow_request.scenario_id
         evidence = EvidenceCollector().collect_feedback(
             source_type=AutotuneEvidenceSource.REAL_TESTNET if executor_accepted else AutotuneEvidenceSource.SHADOW,
             source_weight=1.0 if executor_accepted else 0.0,
             profile_id=self.config.profile.profile_id,
-            parameter_snapshot=self.config.profile.values,
+            parameter_snapshot=profile_values,
             plan_id=plan.plan_id,
-            scenario_id=str(scenario_id) if scenario_id else None,
+            scenario_id=evidence_scenario_id,
             risk_decision_id=risk_decision.risk_decision_id,
             executor_result_id=attempt.result.result_id,
             observations={
@@ -478,12 +532,13 @@ class CycleRunner:
                 "analyzer_probability": plan.dynamics_summary.get("analyzer_probability"),
                 "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
                 "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
-                "shadow_outcome_sample_count": self.config.profile.values.get("shadow_outcome_sample_count", 0),
-                "minimum_shadow_samples_before_execution": self.config.profile.values.get("minimum_shadow_samples_before_execution", 50),
+                "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
+                "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
                 "net_expected_edge_pct": plan.net_expected_edge_pct,
                 "rr_ratio": plan.rr_ratio,
             },
         )
+        self.history_db.log_autotune_evidence(evidence)
         self._record(
             Event(
                 event_type=EventTypes.AUTOTUNE_EVIDENCE_RECORDED,
@@ -494,10 +549,46 @@ class CycleRunner:
             )
         )
 
+        outcome_recorder = OutcomeRecorder(self.history_db)
+        if executor_accepted:
+            _, outcome_event = outcome_recorder.record_execution_ack(
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                scenario_id=evidence_scenario_id,
+                plan=plan,
+                risk_decision=risk_decision,
+                attempt=attempt,
+                evidence=evidence,
+            )
+            if close_attempt is not None:
+                _, close_outcome_event = outcome_recorder.record_testnet_close(
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    scenario_id=evidence_scenario_id,
+                    plan=plan,
+                    entry_attempt=attempt,
+                    close_attempt=close_attempt,
+                    risk_decision=risk_decision,
+                    evidence=evidence,
+                )
+        else:
+            _, outcome_event = outcome_recorder.record_shadow_placeholder(
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                request=shadow_request,
+                plan=plan,
+                risk_decision=risk_decision,
+                evidence=evidence,
+            )
+        self._record(outcome_event)
+        if executor_accepted and close_attempt is not None:
+            self._record(close_outcome_event)
+
         execution_report = Reporter().generate_execution_report(
             plan=plan,
             risk_decision=risk_decision,
             attempt=attempt,
+            close_attempt=close_attempt,
             shadow_request=shadow_request,
             lab_request=lab_request,
             autotune_evidence=evidence,
@@ -509,6 +600,82 @@ class CycleRunner:
                 cycle_id=cycle_id,
                 source="Reporter",
                 payload=execution_report,
+            )
+        )
+
+    def _profile_values_with_outcome_count(self) -> Dict[str, Any]:
+        values = dict(self.config.profile.values)
+        values["shadow_outcome_sample_count"] = self.history_db.count_traceable_outcomes()
+        return values
+
+    def _resolve_pending_outcomes(self, cycle_id: str) -> None:
+        resolver = ScenarioOutcomeResolver()
+        resolved_count = 0
+        for pending in self.history_db.pending_outcomes(limit=50):
+            resolution = resolver.resolve_pending(pending, self.market_snapshot)
+            if not resolution.resolved or resolution.outcome is None:
+                continue
+            self.history_db.log_scenario_outcome(resolution.outcome)
+            resolved_count += 1
+            self._record(
+                Event(
+                    event_type=EventTypes.SCENARIO_OUTCOME_RECORDED,
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    source="ScenarioOutcomeResolver",
+                    payload={
+                        **asdict(resolution.outcome),
+                        "resolved_from_outcome_id": resolution.original_outcome_id,
+                        "resolution_reason": resolution.reason,
+                        "traceable_outcome_sample_count": self.history_db.count_traceable_outcomes(),
+                    },
+                )
+            )
+        self._build_trust_recommendation(cycle_id, resolved_count)
+
+    def _build_trust_recommendation(self, cycle_id: str, newly_resolved_count: int) -> None:
+        outcomes = self.history_db.traceable_outcomes(limit=500)
+        result = TrustEngine().build_recommendation(
+            target_profile_id=self.config.profile.profile_id,
+            profile_values=self._profile_values_with_outcome_count(),
+            outcomes=outcomes,
+            evidence_ids=[],
+        )
+        if result.recommendation is None:
+            if newly_resolved_count > 0:
+                self._record(
+                    Event(
+                        event_type=EventTypes.AUTOTUNE_RECOMMENDATION_CREATED,
+                        run_id=self.run_id,
+                        cycle_id=cycle_id,
+                        source="TrustEngine",
+                        payload={
+                            "status": "no_recommendation",
+                            "reason": result.reason,
+                            "sample_count": result.sample_count,
+                            "newly_resolved_count": newly_resolved_count,
+                            "proposed_trust_points": result.proposed_trust_points,
+                        },
+                    )
+                )
+            return
+        self.history_db.log_autotune_recommendation(result.recommendation)
+        self._record(
+            Event(
+                event_type=EventTypes.AUTOTUNE_RECOMMENDATION_CREATED,
+                run_id=self.run_id,
+                cycle_id=cycle_id,
+                source="TrustEngine",
+                payload={
+                    "status": "recommendation_created_not_applied",
+                    "recommendation": asdict(result.recommendation),
+                    "sample_count": result.sample_count,
+                    "wins": result.win_count,
+                    "losses": result.loss_count,
+                    "flats": result.flat_count,
+                    "proposed_trust_points": result.proposed_trust_points,
+                    "newly_resolved_count": newly_resolved_count,
+                },
             )
         )
 

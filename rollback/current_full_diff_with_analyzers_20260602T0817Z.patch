@@ -1,0 +1,2541 @@
+diff --git a/config/active_profile.json b/config/active_profile.json
+index e19a593..09092b7 100644
+--- a/config/active_profile.json
++++ b/config/active_profile.json
+@@ -16,6 +16,8 @@
+   "market_structure_analyzer_trust_points": 0.10,
+   "minimum_shadow_samples_before_execution": 50,
+   "shadow_outcome_sample_count": 0,
++  "execution_blocking_enabled": false,
++  "testnet_auto_close_enabled": true,
+   "orderbook_min_interval_sec": 30,
+   "native_tf_reconcile_interval_sec": 900,
+   "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION"
+diff --git a/docs/AUTOTUNER_MODEL.md b/docs/AUTOTUNER_MODEL.md
+index aa1bdd0..68c067d 100644
+--- a/docs/AUTOTUNER_MODEL.md
++++ b/docs/AUTOTUNER_MODEL.md
+@@ -67,6 +67,25 @@ Autotuner changes active profile parameters, not secrets, keys, mode or safety l
+ 
+ SafetyKernel boundaries are not autotuned. Shadow and Laboratory may produce evidence that a boundary was too strict or too loose, but changing the boundary is an explicit owner/policy action.
+ 
++## Confidence and trust flow
++
++Autotuner must treat analyzer probability and autotuner trust as separate inputs.
++
++- Analyzer probability is the analyzer's own mathematical forecast of its observation.
++- Autotuner trust points are earned from traceable shadow, laboratory and real outcome evidence.
++- Data quality only gates whether analysis may run; it does not create trade confidence.
++
++Canonical flow:
++
++```text
++effective_confidence = average(analyzer_probability, autotuner_trust_points)
++deal_confidence = average(all effective_confidence values)
++```
++
++Do not sum or multiply these values into a fake certainty number.
++
++Until the minimum shadow / traceable outcome sample count is reached, normal executor approval stays forbidden.
++
+ ## Parameter registry
+ 
+ New modules can add new tunable parameters if they register `ParameterSpec`:
+diff --git a/docs/NOVA_CANON.md b/docs/NOVA_CANON.md
+index 8336ab2..7cc2435 100644
+--- a/docs/NOVA_CANON.md
++++ b/docs/NOVA_CANON.md
+@@ -84,6 +84,23 @@ Autotuner tunes parameters inside the Canon. It must not rewrite the Canon.
+ 
+ Autotuner may adapt thresholds, decay, confidence handling, parameter profiles and conditional behavior when lineage and evidence support that change. It must not change owner-controlled boundaries, secrets, mode selection or the system's meaning model.
+ 
++## Confidence and trust rule
++
++Analyzer probability is the analyzer's own mathematical forecast of its observation. It is not data quality and not trade permission.
++
++Autotuner trust points are separate from analyzer probability. They start at the minimum seed value and change only from traceable shadow, laboratory or real outcome evidence.
++
++Data quality is only a gate for whether analysis may run. It must not be converted into trade confidence.
++
++The canonical confidence flow is:
++
++- per analyzer: `effective_confidence = average(analyzer_probability, autotuner_trust_points)`;
++- for the deal: `deal_confidence = average(all effective_confidence values)`.
++
++These values must not be summed or multiplied into a fake certainty number.
++
++Until the minimum shadow / traceable outcome sample count is reached, normal executor approval is forbidden. Only explicit shadow, laboratory or owner-approved TESTNET probe paths may proceed.
++
+ ## Safety and risk rule
+ 
+ `SafetyKernel` stores non-negotiable owner boundaries.
+@@ -131,4 +148,3 @@ Use these phrases as hard review checks:
+ - this follows the NOVA Canon;
+ - this analyzer must be adapted through the NOVA Canon;
+ - this donor logic violates the NOVA Canon.
+-
+diff --git a/nova/core/history_db.py b/nova/core/history_db.py
+index 6e075ee..26cbc98 100644
+--- a/nova/core/history_db.py
++++ b/nova/core/history_db.py
+@@ -9,16 +9,18 @@ import json
+ import sqlite3
+ from dataclasses import asdict
+ from pathlib import Path
+-from typing import Any, Dict, Iterable
++from typing import Any, Dict, Iterable, List, Optional
+ 
+ from nova.analysis.models import AnalysisResult, StateContribution
+ from nova.analyzers.contracts import AnalysisPackage
++from nova.autotune.models import AutotuneEvidence, AutotuneRecommendation
+ from nova.cards.models import CardDeck, EvidenceCard
+ from nova.core.events import Event
+ from nova.core.state_snapshot import StateSnapshot
+ from nova.data.models import MarketSnapshot
+ from nova.decision.trade_plan import TradePlan
+ from nova.matrix.models import ForecastContribution, ForecastMatrix, MatrixZone, StateMatrix
++from nova.shadow.outcome import OutcomeResult, ResolutionMethod, ScenarioOutcome
+ 
+ 
+ SCHEMA_VERSION = 1
+@@ -234,6 +236,56 @@ class HistoryDB:
+                 )
+                 """
+             )
++            conn.execute(
++                """
++                CREATE TABLE IF NOT EXISTS scenario_outcomes (
++                    outcome_id TEXT PRIMARY KEY,
++                    scenario_id TEXT NOT NULL,
++                    source_type TEXT NOT NULL,
++                    result TEXT NOT NULL,
++                    gross_pnl_pct REAL NOT NULL,
++                    net_pnl_pct REAL NOT NULL,
++                    mfe_pct REAL NOT NULL,
++                    mae_pct REAL NOT NULL,
++                    duration_sec INTEGER NOT NULL,
++                    resolution_method TEXT NOT NULL,
++                    quality REAL NOT NULL,
++                    traceable INTEGER NOT NULL,
++                    payload_json TEXT NOT NULL,
++                    schema_version INTEGER NOT NULL
++                )
++                """
++            )
++            self._ensure_column(conn, "scenario_outcomes", "created_at", "TEXT")
++            conn.execute(
++                """
++                CREATE TABLE IF NOT EXISTS autotune_evidence (
++                    evidence_id TEXT PRIMARY KEY,
++                    source_type TEXT NOT NULL,
++                    source_weight REAL NOT NULL,
++                    profile_id TEXT NOT NULL,
++                    plan_id TEXT,
++                    scenario_id TEXT,
++                    risk_decision_id TEXT,
++                    executor_result_id TEXT,
++                    payload_json TEXT NOT NULL,
++                    schema_version INTEGER NOT NULL
++                )
++                """
++            )
++            conn.execute(
++                """
++                CREATE TABLE IF NOT EXISTS autotune_recommendations (
++                    recommendation_id TEXT PRIMARY KEY,
++                    target_profile_id TEXT NOT NULL,
++                    sample_size INTEGER NOT NULL,
++                    confidence REAL NOT NULL,
++                    reason TEXT NOT NULL,
++                    payload_json TEXT NOT NULL,
++                    schema_version INTEGER NOT NULL
++                )
++                """
++            )
+             self._ensure_column(conn, "state_snapshots", "run_id", "TEXT")
+             for statement in self._index_statements():
+                 conn.execute(statement)
+@@ -255,6 +307,11 @@ class HistoryDB:
+             "CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(primary_symbol)",
+             "CREATE INDEX IF NOT EXISTS idx_state_snapshots_run ON state_snapshots(run_id)",
+             "CREATE INDEX IF NOT EXISTS idx_state_snapshots_cycle ON state_snapshots(cycle_id)",
++            "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_scenario ON scenario_outcomes(scenario_id)",
++            "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_traceable ON scenario_outcomes(traceable)",
++            "CREATE INDEX IF NOT EXISTS idx_scenario_outcomes_result ON scenario_outcomes(result)",
++            "CREATE INDEX IF NOT EXISTS idx_autotune_evidence_scenario ON autotune_evidence(scenario_id)",
++            "CREATE INDEX IF NOT EXISTS idx_autotune_recommendations_profile ON autotune_recommendations(target_profile_id)",
+         ]
+ 
+     def log_event(self, event: Event) -> None:
+@@ -560,6 +617,168 @@ class HistoryDB:
+                 ),
+             )
+ 
++    def log_scenario_outcome(self, outcome: ScenarioOutcome) -> None:
++        payload = asdict(outcome)
++        traceable = self._is_traceable_outcome(outcome)
++        with self._connect() as conn:
++            conn.execute(
++                """
++                INSERT OR REPLACE INTO scenario_outcomes (
++                    outcome_id, scenario_id, source_type, result, gross_pnl_pct,
++                    net_pnl_pct, mfe_pct, mae_pct, duration_sec,
++                    resolution_method, quality, traceable, created_at,
++                    payload_json, schema_version
++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++                """,
++                (
++                    outcome.outcome_id,
++                    outcome.scenario_id,
++                    outcome.source_type,
++                    outcome.result,
++                    outcome.gross_pnl_pct,
++                    outcome.net_pnl_pct,
++                    outcome.mfe_pct,
++                    outcome.mae_pct,
++                    outcome.duration_sec,
++                    outcome.resolution_method,
++                    outcome.quality,
++                    int(traceable),
++                    outcome.created_at,
++                    self._json(payload),
++                    SCHEMA_VERSION,
++                ),
++            )
++
++    def log_autotune_evidence(self, evidence: AutotuneEvidence) -> None:
++        payload = asdict(evidence)
++        with self._connect() as conn:
++            conn.execute(
++                """
++                INSERT OR REPLACE INTO autotune_evidence (
++                    evidence_id, source_type, source_weight, profile_id, plan_id,
++                    scenario_id, risk_decision_id, executor_result_id,
++                    payload_json, schema_version
++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++                """,
++                (
++                    evidence.evidence_id,
++                    evidence.source_type,
++                    evidence.source_weight,
++                    evidence.profile_id,
++                    evidence.plan_id,
++                    evidence.scenario_id,
++                    evidence.risk_decision_id,
++                    evidence.executor_result_id,
++                    self._json(payload),
++                    SCHEMA_VERSION,
++                ),
++            )
++
++    def log_autotune_recommendation(self, recommendation: AutotuneRecommendation) -> None:
++        payload = asdict(recommendation)
++        with self._connect() as conn:
++            conn.execute(
++                """
++                INSERT OR REPLACE INTO autotune_recommendations (
++                    recommendation_id, target_profile_id, sample_size,
++                    confidence, reason, payload_json, schema_version
++                ) VALUES (?, ?, ?, ?, ?, ?, ?)
++                """,
++                (
++                    recommendation.recommendation_id,
++                    recommendation.target_profile_id,
++                    recommendation.sample_size,
++                    recommendation.confidence,
++                    recommendation.reason,
++                    self._json(payload),
++                    SCHEMA_VERSION,
++                ),
++            )
++
++    def traceable_outcomes(self, source_type: str | None = None, limit: int = 500) -> List[ScenarioOutcome]:
++        query = "SELECT payload_json FROM scenario_outcomes WHERE traceable = 1"
++        params: list[object] = []
++        if source_type is not None:
++            query += " AND source_type = ?"
++            params.append(source_type)
++        query += " ORDER BY created_at DESC LIMIT ?"
++        params.append(limit)
++        with self._connect() as conn:
++            rows = conn.execute(query, params).fetchall()
++        return [self._outcome_from_payload(json.loads(row["payload_json"])) for row in rows]
++
++    def pending_outcomes(self, limit: int = 100) -> List[ScenarioOutcome]:
++        with self._connect() as conn:
++            rows = conn.execute(
++                """
++                SELECT payload_json FROM scenario_outcomes
++                WHERE result = ? AND resolution_method = ?
++                ORDER BY created_at ASC
++                LIMIT ?
++                """,
++                (OutcomeResult.PENDING, ResolutionMethod.PENDING, limit),
++            ).fetchall()
++        return [self._outcome_from_payload(json.loads(row["payload_json"])) for row in rows]
++
++    def latest_outcome_for_scenario(self, scenario_id: str) -> Optional[ScenarioOutcome]:
++        with self._connect() as conn:
++            row = conn.execute(
++                """
++                SELECT payload_json FROM scenario_outcomes
++                WHERE scenario_id = ?
++                ORDER BY created_at DESC
++                LIMIT 1
++                """,
++                (scenario_id,),
++            ).fetchone()
++        if row is None:
++            return None
++        return self._outcome_from_payload(json.loads(row["payload_json"]))
++
++    def count_traceable_outcomes(self, source_type: str | None = None) -> int:
++        query = "SELECT COUNT(*) FROM scenario_outcomes WHERE traceable = 1"
++        params: list[str] = []
++        if source_type is not None:
++            query += " AND source_type = ?"
++            params.append(source_type)
++        with self._connect() as conn:
++            return int(conn.execute(query, params).fetchone()[0])
++
++    @staticmethod
++    def _is_traceable_outcome(outcome: ScenarioOutcome) -> bool:
++        if outcome.quality <= 0:
++            return False
++        traceable_methods = {
++            ResolutionMethod.TESTNET_CLOSE,
++            ResolutionMethod.OHLC_CLEAR,
++            ResolutionMethod.ONE_MINUTE_REPLAY,
++            ResolutionMethod.AGGTRADES_REPLAY,
++        }
++        if outcome.resolution_method not in traceable_methods:
++            return False
++        return outcome.result not in {OutcomeResult.PENDING, OutcomeResult.UNRESOLVED}
++
++    @staticmethod
++    def _outcome_from_payload(payload: Dict[str, Any]) -> ScenarioOutcome:
++        return ScenarioOutcome(
++            scenario_id=str(payload["scenario_id"]),
++            source_type=str(payload["source_type"]),
++            result=str(payload["result"]),
++            gross_pnl_pct=float(payload["gross_pnl_pct"]),
++            net_pnl_pct=float(payload["net_pnl_pct"]),
++            mfe_pct=float(payload["mfe_pct"]),
++            mae_pct=float(payload["mae_pct"]),
++            duration_sec=int(payload["duration_sec"]),
++            resolution_method=str(payload["resolution_method"]),
++            quality=float(payload["quality"]),
++            planned_costs=dict(payload.get("planned_costs") or {}),
++            actual_costs=dict(payload.get("actual_costs") or {}),
++            payload=dict(payload.get("payload") or {}),
++            outcome_id=str(payload["outcome_id"]),
++            created_at=str(payload.get("created_at") or ""),
++            notes=payload.get("notes"),
++        )
++
+     @staticmethod
+     def _json(payload: Dict[str, Any]) -> str:
+         return json.dumps(payload, ensure_ascii=False, default=str)
+diff --git a/nova/execution/exchange_executor.py b/nova/execution/exchange_executor.py
+index f136013..56ed4e6 100644
+--- a/nova/execution/exchange_executor.py
++++ b/nova/execution/exchange_executor.py
+@@ -100,6 +100,101 @@ class ExchangeExecutor:
+             )
+             return ExecutionAttempt(request=request, result=result)
+ 
++    def close_reduce_only(
++        self,
++        *,
++        trade_plan: TradePlan,
++        entry_attempt: ExecutionAttempt,
++        risk_decision: RiskDecision,
++    ) -> ExecutionAttempt:
++        if self.config.trading_mode != "TESTNET":
++            result = ExecutorResult(
++                request_id=None,
++                plan_id=trade_plan.plan_id,
++                status=ExecutorResultStatus.NOT_CALLED,
++                reason="reduce_only_close_allowed_only_in_testnet",
++                raw_response={"trading_mode": self.config.trading_mode},
++            )
++            return ExecutionAttempt(request=None, result=result)
++        if entry_attempt.result.status != ExecutorResultStatus.ACCEPTED:
++            result = ExecutorResult(
++                request_id=None,
++                plan_id=trade_plan.plan_id,
++                status=ExecutorResultStatus.NOT_CALLED,
++                reason="entry_order_not_accepted_for_close",
++                raw_response={"entry_status": entry_attempt.result.status},
++            )
++            return ExecutionAttempt(request=None, result=result)
++        close_side = self._opposite_side(self._side_from_plan(trade_plan))
++        quantity = entry_attempt.result.executed_qty
++        if close_side is None or quantity is None or quantity <= 0:
++            result = ExecutorResult(
++                request_id=None,
++                plan_id=trade_plan.plan_id,
++                status=ExecutorResultStatus.NOT_CALLED,
++                reason="missing_close_side_or_quantity",
++                raw_response={"close_side": close_side, "executed_qty": quantity},
++            )
++            return ExecutionAttempt(request=None, result=result)
++
++        reference_price = trade_plan.entry_price or entry_attempt.result.avg_price or 0.0
++        request = ExecutorRequest(
++            plan_id=trade_plan.plan_id,
++            risk_decision_id=risk_decision.risk_decision_id,
++            symbol=trade_plan.symbol,
++            side=close_side,
++            order_type="MARKET",
++            quantity=str(quantity),
++            notional_usdt=float(quantity) * float(reference_price or 0.0),
++            reference_price=float(reference_price or 0.0),
++            testnet_only=True,
++            reduce_only=True,
++            payload={
++                "entry_result_id": entry_attempt.result.result_id,
++                "entry_exchange_order_id": entry_attempt.result.exchange_order_id,
++                "purpose": "testnet_position_close",
++            },
++        )
++        order = {
++            "symbol": trade_plan.symbol.upper(),
++            "side": close_side,
++            "type": "MARKET",
++            "quantity": str(quantity),
++            "reduceOnly": True,
++        }
++        try:
++            raw = self._connector().place_order(order)
++            result = ExecutorResult(
++                request_id=request.request_id,
++                plan_id=trade_plan.plan_id,
++                status=ExecutorResultStatus.ACCEPTED,
++                reason="binance_reduce_only_close_accepted",
++                exchange_order_id=str(raw.get("orderId")) if raw.get("orderId") is not None else None,
++                client_order_id=raw.get("clientOrderId"),
++                executed_qty=self._float_or_none(raw.get("executedQty") or raw.get("origQty")),
++                avg_price=self._float_or_none(raw.get("avgPrice")),
++                raw_response=self._safe_raw(raw),
++            )
++            return ExecutionAttempt(request=request, result=result)
++        except Exception as exc:  # noqa: BLE001 - close attempts must be recorded, not hidden.
++            reason = "reduce_only_close_error"
++            raw_response: dict[str, object] = {"error": str(exc)}
++            try:
++                parsed = json.loads(str(exc))
++                if isinstance(parsed, dict):
++                    raw_response = parsed
++                    reason = str(parsed.get("msg") or parsed.get("code") or reason)
++            except json.JSONDecodeError:
++                pass
++            result = ExecutorResult(
++                request_id=request.request_id,
++                plan_id=trade_plan.plan_id,
++                status=ExecutorResultStatus.ERROR,
++                reason=reason,
++                raw_response=raw_response,
++            )
++            return ExecutionAttempt(request=request, result=result)
++
+     def _connector(self) -> BinanceFuturesConnector:
+         section = "BINANCE_TESTNET" if self.config.trading_mode == "TESTNET" else "BINANCE_LIVE"
+         base_url = self.config.secrets.get(section, "base_url", fallback=self.config.public_rest_base_url)
+@@ -132,6 +227,14 @@ class ExchangeExecutor:
+             return "SELL"
+         return None
+ 
++    @staticmethod
++    def _opposite_side(side: Optional[str]) -> Optional[str]:
++        if side == "BUY":
++            return "SELL"
++        if side == "SELL":
++            return "BUY"
++        return None
++
+     @staticmethod
+     def _float_or_none(value: object) -> Optional[float]:
+         try:
+diff --git a/nova/reports/reporter.py b/nova/reports/reporter.py
+index 69a833a..040db0e 100644
+--- a/nova/reports/reporter.py
++++ b/nova/reports/reporter.py
+@@ -21,6 +21,7 @@ class Reporter:
+         plan: TradePlan,
+         risk_decision: RiskDecision,
+         attempt: ExecutionAttempt,
++        close_attempt: Optional[ExecutionAttempt] = None,
+         shadow_request: Optional[object] = None,
+         lab_request: Optional[object] = None,
+         autotune_evidence: Optional[object] = None,
+@@ -64,6 +65,7 @@ class Reporter:
+                 "avg_price": attempt.result.avg_price,
+                 "raw_response": attempt.result.raw_response,
+             },
++            "close_execution": self._attempt_ref(close_attempt),
+             "shadow": self._request_ref(shadow_request),
+             "lab": self._request_ref(lab_request),
+             "autotune": {
+@@ -84,3 +86,20 @@ class Reporter:
+             "trade_plan_id": getattr(request, "trade_plan_id", None),
+             "tags": getattr(request, "tags", None),
+         }
++
++    @staticmethod
++    def _attempt_ref(attempt: Optional[ExecutionAttempt]) -> Optional[dict[str, Any]]:
++        if attempt is None:
++            return None
++        return {
++            "request_id": attempt.request.request_id if attempt.request else None,
++            "result_id": attempt.result.result_id,
++            "status": attempt.result.status,
++            "reason": attempt.result.reason,
++            "exchange_order_id": attempt.result.exchange_order_id,
++            "client_order_id": attempt.result.client_order_id,
++            "executed_qty": attempt.result.executed_qty,
++            "avg_price": attempt.result.avg_price,
++            "reduce_only": attempt.request.reduce_only if attempt.request else None,
++            "raw_response": attempt.result.raw_response,
++        }
+diff --git a/nova/risk/risk_manager.py b/nova/risk/risk_manager.py
+index 20dfb87..b2b577c 100644
+--- a/nova/risk/risk_manager.py
++++ b/nova/risk/risk_manager.py
+@@ -53,14 +53,21 @@ class RiskManager:
+         if plan.rr_ratio is not None and plan.rr_ratio < target_rr_min:
+             warnings.append("rr_below_profile_reference")
+ 
++        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
+         confidence_threshold = float(profile_values.get("confidence_threshold", 0.7))
+         if plan.confidence < confidence_threshold:
+-            hard_blocks.append("effective_confidence_below_profile_threshold")
++            if execution_blocking_enabled:
++                hard_blocks.append("effective_confidence_below_profile_threshold")
++            else:
++                warnings.append("effective_confidence_below_profile_threshold")
+ 
+         minimum_shadow_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
+         shadow_sample_count = int(profile_values.get("shadow_outcome_sample_count", 0))
+         if shadow_sample_count < minimum_shadow_samples:
+-            hard_blocks.append("minimum_shadow_samples_not_reached")
++            if execution_blocking_enabled:
++                hard_blocks.append("minimum_shadow_samples_not_reached")
++            else:
++                warnings.append("minimum_shadow_samples_not_reached")
+ 
+         if state_matrix is None:
+             warnings.append("missing_state_matrix_object")
+@@ -111,6 +118,7 @@ class RiskManager:
+         profile_values: Dict[str, Any],
+         active_positions_count: int,
+     ) -> Dict[str, object]:
++        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
+         return {
+             "not_executor": True,
+             "testnet_feedback_mode": True,
+@@ -127,6 +135,7 @@ class RiskManager:
+             "active_positions_count": active_positions_count,
+             "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
+             "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
++            "execution_blocking_enabled": execution_blocking_enabled,
+             "profile_refs": {
+                 "min_net_edge_pct": profile_values.get("min_net_edge_pct"),
+                 "target_rr_min": profile_values.get("target_rr_min"),
+diff --git a/nova/shadow/outcome.py b/nova/shadow/outcome.py
+index 8d438c8..a9d6aba 100644
+--- a/nova/shadow/outcome.py
++++ b/nova/shadow/outcome.py
+@@ -3,11 +3,16 @@
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass, field
++from datetime import datetime, timezone
+ from typing import Dict, Optional
+ 
+ from nova.core.ids import OUTCOME, new_id
+ 
+ 
++def utc_now() -> str:
++    return datetime.now(timezone.utc).isoformat()
++
++
+ @dataclass(frozen=True)
+ class ScenarioOutcome:
+     scenario_id: str
+@@ -22,13 +27,29 @@ class ScenarioOutcome:
+     quality: float
+     planned_costs: Dict[str, float] = field(default_factory=dict)
+     actual_costs: Dict[str, float] = field(default_factory=dict)
++    payload: Dict[str, object] = field(default_factory=dict)
+     outcome_id: str = field(default_factory=lambda: new_id(OUTCOME))
++    created_at: str = field(default_factory=utc_now)
+     notes: Optional[str] = None
+ 
+ 
++class OutcomeResult:
++    PENDING = "PENDING"
++    UNRESOLVED = "UNRESOLVED"
++    EXECUTOR_ACCEPTED = "EXECUTOR_ACCEPTED"
++    EXECUTOR_REJECTED = "EXECUTOR_REJECTED"
++    EXECUTOR_NOT_CALLED = "EXECUTOR_NOT_CALLED"
++    OBSERVED_WIN = "OBSERVED_WIN"
++    OBSERVED_LOSS = "OBSERVED_LOSS"
++    OBSERVED_FLAT = "OBSERVED_FLAT"
++
++
+ class ResolutionMethod:
++    PENDING = "PENDING"
++    EXECUTION_ACK = "EXECUTION_ACK"
++    TESTNET_CLOSE = "TESTNET_CLOSE"
++    NOT_EXECUTED = "NOT_EXECUTED"
+     OHLC_CLEAR = "OHLC_CLEAR"
+     ONE_MINUTE_REPLAY = "ONE_MINUTE_REPLAY"
+     AGGTRADES_REPLAY = "AGGTRADES_REPLAY"
+     AMBIGUOUS = "AMBIGUOUS"
+-
+diff --git a/nova/supervisor/cycle_runner.py b/nova/supervisor/cycle_runner.py
+index 5911d37..d4e6729 100644
+--- a/nova/supervisor/cycle_runner.py
++++ b/nova/supervisor/cycle_runner.py
+@@ -10,12 +10,21 @@ from __future__ import annotations
+ from dataclasses import asdict
+ from typing import Any, Dict, List
+ 
++from nova.analyzers.btc_correlation import BTCCorrelationAnalyzer
+ from nova.analyzers.contracts import AnalysisPackage
++from nova.analyzers.derivatives_context import DerivativesContextAnalyzer
++from nova.analyzers.fractal_structure import FractalStructureAnalyzer
+ from nova.analyzers.market_structure import MarketStructureAnalyzer
++from nova.analyzers.news_context import NewsContextAnalyzer
++from nova.analyzers.orderbook_liquidity import OrderbookLiquidityAnalyzer
++from nova.analyzers.pattern_formation import PatternFormationAnalyzer
+ from nova.analyzers.registry import AnalyzerRegistry
+ from nova.analyzers.runner import AnalyzerRunner
++from nova.analyzers.volatility_regime import VolatilityRegimeAnalyzer
++from nova.analyzers.volume_profile import VolumeProfileAnalyzer
+ from nova.autotune.evidence_collector import EvidenceCollector
+ from nova.autotune.models import AutotuneEvidenceSource
++from nova.autotune.trust_engine import TrustEngine
+ from nova.core.config_loader import RuntimeConfig
+ from nova.core.event_log import EventLog
+ from nova.core.events import Event, EventTypes
+@@ -35,6 +44,8 @@ from nova.risk.risk_manager import RiskManager
+ from nova.scenario.builder import ScenarioBuilder
+ from nova.scenario.models import ScenarioBuildResult
+ from nova.shadow.shadow_engine import ShadowEngine
++from nova.shadow.outcome_recorder import OutcomeRecorder
++from nova.shadow.outcome_resolver import ScenarioOutcomeResolver
+ 
+ 
+ class CycleRunner:
+@@ -94,6 +105,7 @@ class CycleRunner:
+ 
+         analysis_summary: Dict[str, Any] = {"status": "not_started"}
+         if self.market_snapshot is not None and self.market_snapshot.quality.is_usable:
++            self._resolve_pending_outcomes(cycle_id)
+             analysis_summary = self._run_pre_decision_analysis(cycle_id)
+ 
+         plan = self._calculate_trade_plan(cycle_id, analysis_summary)
+@@ -162,7 +174,19 @@ class CycleRunner:
+         )
+ 
+     def _run_pre_decision_analysis(self, cycle_id: str) -> Dict[str, Any]:
+-        registry = AnalyzerRegistry([MarketStructureAnalyzer()])
++        registry = AnalyzerRegistry(
++            [
++                MarketStructureAnalyzer(),
++                VolumeProfileAnalyzer(),
++                OrderbookLiquidityAnalyzer(),
++                VolatilityRegimeAnalyzer(),
++                FractalStructureAnalyzer(),
++                PatternFormationAnalyzer(),
++                BTCCorrelationAnalyzer(),
++                DerivativesContextAnalyzer(),
++                NewsContextAnalyzer(),
++            ]
++        )
+         analyzer_names = sorted(registry.manifests().keys())
+         self._record(
+             Event(
+@@ -391,10 +415,11 @@ class CycleRunner:
+ 
+     def _run_feedback_slice(self, cycle_id: str, plan: TradePlan, analysis_summary: Dict[str, Any]) -> None:
+         state_matrix = self._state_matrix_from_summary(analysis_summary)
++        profile_values = self._profile_values_with_outcome_count()
+         risk_decision = RiskManager().evaluate(
+             plan=plan,
+             state_matrix=state_matrix,
+-            profile_values=self.config.profile.values,
++            profile_values=profile_values,
+             active_positions_count=0,
+         )
+         self._record(
+@@ -407,7 +432,8 @@ class CycleRunner:
+             )
+         )
+ 
+-        attempt = ExchangeExecutor(self.config).execute(plan, risk_decision)
++        executor = ExchangeExecutor(self.config)
++        attempt = executor.execute(plan, risk_decision)
+         if attempt.request is not None:
+             self._record(
+                 Event(
+@@ -428,6 +454,34 @@ class CycleRunner:
+             )
+         )
+ 
++        executor_accepted = attempt.result.status == "ACCEPTED"
++        close_attempt = None
++        if executor_accepted and bool(profile_values.get("testnet_auto_close_enabled", False)):
++            close_attempt = executor.close_reduce_only(
++                trade_plan=plan,
++                entry_attempt=attempt,
++                risk_decision=risk_decision,
++            )
++            if close_attempt.request is not None:
++                self._record(
++                    Event(
++                        event_type=EventTypes.EXECUTOR_REQUEST_CREATED,
++                        run_id=self.run_id,
++                        cycle_id=cycle_id,
++                        source="ExchangeExecutor",
++                        payload=asdict(close_attempt.request),
++                    )
++                )
++            self._record(
++                Event(
++                    event_type=EventTypes.EXECUTOR_RESULT_RECORDED,
++                    run_id=self.run_id,
++                    cycle_id=cycle_id,
++                    source="ExchangeExecutor",
++                    payload={**asdict(close_attempt.result), "close_attempt": True},
++                )
++            )
++
+         shadow_request = ShadowEngine().on_trade_plan(plan, risk_decision)
+         self._record(
+             Event(
+@@ -458,15 +512,15 @@ class CycleRunner:
+                 )
+             )
+ 
+-        scenario_id = plan.dynamics_summary.get("scenario_id")
+-        executor_accepted = attempt.result.status == "ACCEPTED"
++        plan_scenario_id = plan.dynamics_summary.get("scenario_id")
++        evidence_scenario_id = str(plan_scenario_id) if executor_accepted and plan_scenario_id else shadow_request.scenario_id
+         evidence = EvidenceCollector().collect_feedback(
+             source_type=AutotuneEvidenceSource.REAL_TESTNET if executor_accepted else AutotuneEvidenceSource.SHADOW,
+             source_weight=1.0 if executor_accepted else 0.0,
+             profile_id=self.config.profile.profile_id,
+-            parameter_snapshot=self.config.profile.values,
++            parameter_snapshot=profile_values,
+             plan_id=plan.plan_id,
+-            scenario_id=str(scenario_id) if scenario_id else None,
++            scenario_id=evidence_scenario_id,
+             risk_decision_id=risk_decision.risk_decision_id,
+             executor_result_id=attempt.result.result_id,
+             observations={
+@@ -478,12 +532,13 @@ class CycleRunner:
+                 "analyzer_probability": plan.dynamics_summary.get("analyzer_probability"),
+                 "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
+                 "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
+-                "shadow_outcome_sample_count": self.config.profile.values.get("shadow_outcome_sample_count", 0),
+-                "minimum_shadow_samples_before_execution": self.config.profile.values.get("minimum_shadow_samples_before_execution", 50),
++                "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
++                "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
+                 "net_expected_edge_pct": plan.net_expected_edge_pct,
+                 "rr_ratio": plan.rr_ratio,
+             },
+         )
++        self.history_db.log_autotune_evidence(evidence)
+         self._record(
+             Event(
+                 event_type=EventTypes.AUTOTUNE_EVIDENCE_RECORDED,
+@@ -494,10 +549,46 @@ class CycleRunner:
+             )
+         )
+ 
++        outcome_recorder = OutcomeRecorder(self.history_db)
++        if executor_accepted:
++            _, outcome_event = outcome_recorder.record_execution_ack(
++                run_id=self.run_id,
++                cycle_id=cycle_id,
++                scenario_id=evidence_scenario_id,
++                plan=plan,
++                risk_decision=risk_decision,
++                attempt=attempt,
++                evidence=evidence,
++            )
++            if close_attempt is not None:
++                _, close_outcome_event = outcome_recorder.record_testnet_close(
++                    run_id=self.run_id,
++                    cycle_id=cycle_id,
++                    scenario_id=evidence_scenario_id,
++                    plan=plan,
++                    entry_attempt=attempt,
++                    close_attempt=close_attempt,
++                    risk_decision=risk_decision,
++                    evidence=evidence,
++                )
++        else:
++            _, outcome_event = outcome_recorder.record_shadow_placeholder(
++                run_id=self.run_id,
++                cycle_id=cycle_id,
++                request=shadow_request,
++                plan=plan,
++                risk_decision=risk_decision,
++                evidence=evidence,
++            )
++        self._record(outcome_event)
++        if executor_accepted and close_attempt is not None:
++            self._record(close_outcome_event)
++
+         execution_report = Reporter().generate_execution_report(
+             plan=plan,
+             risk_decision=risk_decision,
+             attempt=attempt,
++            close_attempt=close_attempt,
+             shadow_request=shadow_request,
+             lab_request=lab_request,
+             autotune_evidence=evidence,
+@@ -512,6 +603,82 @@ class CycleRunner:
+             )
+         )
+ 
++    def _profile_values_with_outcome_count(self) -> Dict[str, Any]:
++        values = dict(self.config.profile.values)
++        values["shadow_outcome_sample_count"] = self.history_db.count_traceable_outcomes()
++        return values
++
++    def _resolve_pending_outcomes(self, cycle_id: str) -> None:
++        resolver = ScenarioOutcomeResolver()
++        resolved_count = 0
++        for pending in self.history_db.pending_outcomes(limit=50):
++            resolution = resolver.resolve_pending(pending, self.market_snapshot)
++            if not resolution.resolved or resolution.outcome is None:
++                continue
++            self.history_db.log_scenario_outcome(resolution.outcome)
++            resolved_count += 1
++            self._record(
++                Event(
++                    event_type=EventTypes.SCENARIO_OUTCOME_RECORDED,
++                    run_id=self.run_id,
++                    cycle_id=cycle_id,
++                    source="ScenarioOutcomeResolver",
++                    payload={
++                        **asdict(resolution.outcome),
++                        "resolved_from_outcome_id": resolution.original_outcome_id,
++                        "resolution_reason": resolution.reason,
++                        "traceable_outcome_sample_count": self.history_db.count_traceable_outcomes(),
++                    },
++                )
++            )
++        self._build_trust_recommendation(cycle_id, resolved_count)
++
++    def _build_trust_recommendation(self, cycle_id: str, newly_resolved_count: int) -> None:
++        outcomes = self.history_db.traceable_outcomes(limit=500)
++        result = TrustEngine().build_recommendation(
++            target_profile_id=self.config.profile.profile_id,
++            profile_values=self._profile_values_with_outcome_count(),
++            outcomes=outcomes,
++            evidence_ids=[],
++        )
++        if result.recommendation is None:
++            if newly_resolved_count > 0:
++                self._record(
++                    Event(
++                        event_type=EventTypes.AUTOTUNE_RECOMMENDATION_CREATED,
++                        run_id=self.run_id,
++                        cycle_id=cycle_id,
++                        source="TrustEngine",
++                        payload={
++                            "status": "no_recommendation",
++                            "reason": result.reason,
++                            "sample_count": result.sample_count,
++                            "newly_resolved_count": newly_resolved_count,
++                            "proposed_trust_points": result.proposed_trust_points,
++                        },
++                    )
++                )
++            return
++        self.history_db.log_autotune_recommendation(result.recommendation)
++        self._record(
++            Event(
++                event_type=EventTypes.AUTOTUNE_RECOMMENDATION_CREATED,
++                run_id=self.run_id,
++                cycle_id=cycle_id,
++                source="TrustEngine",
++                payload={
++                    "status": "recommendation_created_not_applied",
++                    "recommendation": asdict(result.recommendation),
++                    "sample_count": result.sample_count,
++                    "wins": result.win_count,
++                    "losses": result.loss_count,
++                    "flats": result.flat_count,
++                    "proposed_trust_points": result.proposed_trust_points,
++                    "newly_resolved_count": newly_resolved_count,
++                },
++            )
++        )
++
+     def _state_matrix_from_summary(self, analysis_summary: Dict[str, Any]) -> StateMatrix | None:
+         scenario_result = analysis_summary.get("scenario_build_result")
+         if not isinstance(scenario_result, ScenarioBuildResult) or scenario_result.candidate is None:
+diff --git a/nova/analyzers/common.py b/nova/analyzers/common.py
+new file mode 100644
+index 0000000..458594c
+--- /dev/null
++++ b/nova/analyzers/common.py
+@@ -0,0 +1,209 @@
++"""Shared helpers for canonical NOVA analyzers.
++
++The helpers keep analyzer modules small while preserving the NOVA contract:
++analyzers observe market phenomena, emit lineage, and never own trade decisions.
++"""
++
++from __future__ import annotations
++
++from typing import Any, Iterable, List, Optional
++
++from nova.analysis.models import AnalysisResult, AnalysisStatus, EvidenceRef, StateContribution
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.cards.models import CardDeck, CardInfluenceRights, EvidenceCard
++from nova.core.evidence import CardStage, CardType, EvidenceTier
++from nova.data.models import Candle, CandleSeries, MarketSnapshot
++from nova.data.synthetic_tf import timeframe_to_minutes
++from nova.matrix.models import ForecastContribution
++
++
++def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
++    return max(low, min(high, value))
++
++
++def safe_div(numerator: float, denominator: float, default: float = 0.0) -> float:
++    if denominator == 0.0:
++        return default
++    return numerator / denominator
++
++
++def ordered_candles(series: CandleSeries, lookback: int | None = None) -> List[Candle]:
++    candles = sorted(series.candles, key=lambda item: item.open_time)
++    return candles[-lookback:] if lookback is not None and lookback > 0 else candles
++
++
++def latest_close(series: CandleSeries) -> Optional[float]:
++    candle = series.latest_closed()
++    return candle.close if candle else None
++
++
++def evidence_refs_for_snapshot(
++    snapshot: MarketSnapshot,
++    *,
++    series: CandleSeries | None = None,
++    extra: Iterable[EvidenceRef] | None = None,
++) -> List[EvidenceRef]:
++    refs = [
++        EvidenceRef(
++            evidence_type="market_snapshot",
++            source_id=snapshot.snapshot_id,
++            description="NOVA MarketSnapshot used by analyzer.",
++        )
++    ]
++    if series is not None:
++        refs.append(
++            EvidenceRef(
++                evidence_type="candle_series",
++                source_id=series.series_id,
++                description=f"{series.symbol} {series.timeframe} candle series from MarketSnapshot.",
++            )
++        )
++    refs.extend(list(extra or []))
++    return refs
++
++
++def no_data_package(manifest: AnalyzerManifest, context: AnalyzerContext, reason: str) -> AnalysisPackage:
++    result = AnalysisResult(
++        analyzer_name=manifest.name,
++        analyzer_version=manifest.version,
++        symbol=context.symbol,
++        timeframe=context.timeframe,
++        run_id=context.run_id,
++        cycle_id=context.cycle_id,
++        market_snapshot_id=context.market_snapshot_id,
++        confidence=0.0,
++        quality=0.0,
++        status=AnalysisStatus.NO_DATA,
++        payload={"reason": reason, "not_trade_decision": True},
++        parameters_used=context.parameters,
++        input_ids=context.available_data_ids,
++        dependency_group=manifest.dependency_group,
++        stage=CardStage.RAW,
++        evidence_tier=EvidenceTier.PRIMARY,
++        feedback_depth=0,
++    )
++    return AnalysisPackage(analysis_result=result, card_deck=CardDeck(cycle_id=context.cycle_id))
++
++
++def build_package(
++    *,
++    manifest: AnalyzerManifest,
++    context: AnalyzerContext,
++    payload: dict[str, Any],
++    confidence: float,
++    quality: float,
++    evidence_refs: List[EvidenceRef],
++    forecast_specs: Iterable[dict[str, Any]] | None = None,
++    state_type: str | None = None,
++    state_value: Any | None = None,
++    state_severity: str = "INFO",
++    ttl_sec: int = 300,
++) -> AnalysisPackage:
++    payload = {
++        "not_trade_decision": True,
++        "probability_semantics": "analyzer_observation_probability_not_executor_permission",
++        "confidence_semantics": "math_observation_reliability_not_trade_confidence",
++        **payload,
++    }
++    bounded_confidence = clamp(confidence, 0.1, 0.9)
++    result = AnalysisResult(
++        analyzer_name=manifest.name,
++        analyzer_version=manifest.version,
++        symbol=context.symbol,
++        timeframe=context.timeframe,
++        run_id=context.run_id,
++        cycle_id=context.cycle_id,
++        market_snapshot_id=context.market_snapshot_id,
++        confidence=bounded_confidence,
++        quality=clamp(quality),
++        status=AnalysisStatus.OK,
++        payload=payload,
++        parameters_used=context.parameters,
++        input_ids=context.available_data_ids,
++        dependency_group=manifest.dependency_group,
++        stage=CardStage.RAW,
++        evidence_tier=EvidenceTier.PRIMARY,
++        feedback_depth=0,
++        evidence_refs=evidence_refs,
++    )
++
++    cards: List[EvidenceCard] = []
++    forecast_card: EvidenceCard | None = None
++    specs = list(forecast_specs or [])
++    if specs:
++        forecast_card = EvidenceCard.primary_forecast(
++            cycle_id=context.cycle_id,
++            source_analysis_result_id=result.analysis_result_id,
++            source_analyzer=manifest.name,
++            payload=payload,
++            evidence_refs=evidence_refs,
++        )
++        cards.append(forecast_card)
++
++    state_card: EvidenceCard | None = None
++    if state_type is not None:
++        state_card = EvidenceCard(
++            card_type=CardType.STATE,
++            stage=CardStage.RAW,
++            tier=EvidenceTier.PRIMARY,
++            cycle_id=context.cycle_id,
++            source_analysis_result_id=result.analysis_result_id,
++            source_analyzer=manifest.name,
++            rights=CardInfluenceRights(can_affect_decision_context=True),
++            evidence_refs=evidence_refs,
++            payload=payload,
++        )
++        cards.append(state_card)
++
++    forecasts = [
++        ForecastContribution(
++            symbol=context.symbol,
++            source_analysis_result_id=result.analysis_result_id,
++            timeframe=context.timeframe,
++            horizon_min=max(1, int(spec.get("horizon_min", timeframe_to_minutes(context.timeframe)))),
++            price_low=float(spec["price_low"]),
++            price_high=float(spec["price_high"]),
++            probability=clamp(float(spec.get("probability", bounded_confidence)), 0.1, 0.9),
++            confidence=clamp(float(spec.get("confidence", bounded_confidence)), 0.1, 0.9),
++            direction=str(spec.get("direction", "CONTEXT")),
++            weight=clamp(float(spec.get("weight", 1.0))),
++            dependency_group=manifest.dependency_group,
++            decay_sec=max(60, int(spec.get("decay_sec", ttl_sec))),
++            stage=CardStage.RAW,
++            evidence_tier=EvidenceTier.PRIMARY,
++            feedback_depth=0,
++            source_card_ids=[forecast_card.card_id] if forecast_card else [],
++            phenomenon=str(spec.get("phenomenon", payload.get("phenomenon", manifest.name))),
++            field_shape=str(spec.get("field_shape", "bounded_price_area")),
++            invalidation_price=spec.get("invalidation_price"),
++            evidence_refs=evidence_refs,
++            payload={**payload, **dict(spec.get("payload", {}))},
++        )
++        for spec in specs
++        if float(spec["price_low"]) > 0.0 and float(spec["price_high"]) >= float(spec["price_low"])
++    ]
++
++    states = []
++    if state_type is not None:
++        states.append(
++            StateContribution(
++                source_analysis_result_id=result.analysis_result_id,
++                state_type=state_type,
++                value=state_value if state_value is not None else payload,
++                confidence=bounded_confidence,
++                severity=state_severity,
++                ttl_sec=ttl_sec,
++                stage=CardStage.RAW,
++                evidence_tier=EvidenceTier.PRIMARY,
++                feedback_depth=0,
++                source_card_ids=[state_card.card_id] if state_card else [],
++                evidence_refs=evidence_refs,
++            )
++        )
++    return AnalysisPackage(
++        analysis_result=result,
++        card_deck=CardDeck(cycle_id=context.cycle_id, cards=cards),
++        forecast_contributions=forecasts,
++        state_contributions=states,
++    )
++
+diff --git a/nova/analyzers/volume_profile.py b/nova/analyzers/volume_profile.py
+new file mode 100644
+index 0000000..24791eb
+--- /dev/null
++++ b/nova/analyzers/volume_profile.py
+@@ -0,0 +1,119 @@
++"""Canonical NOVA volume profile analyzer."""
++
++from __future__ import annotations
++
++from typing import Any
++
++from nova.analyzers.common import build_package, clamp, evidence_refs_for_snapshot, no_data_package, ordered_candles, safe_div
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.core.evidence import CardType
++from nova.data.synthetic_tf import timeframe_to_minutes
++
++
++class VolumeProfileAnalyzer:
++    manifest = AnalyzerManifest(
++        name="volume_profile_analyzer",
++        version="0.1.0",
++        description="Builds POC/value-area/liquidity-node observations from OHLCV candles.",
++        dependency_group="volume_profile_ohlcv",
++        required_inputs=["MarketSnapshot.candles.volume"],
++        supported_timeframes=["5m"],
++        output_card_types=[CardType.FORECAST, CardType.STATE],
++        parameter_names=["volume_profile_lookback_candles", "volume_profile_buckets", "volume_profile_horizon_bars"],
++    )
++
++    def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
++        snapshot = context.market_snapshot
++        if snapshot is None:
++            return no_data_package(self.manifest, context, "missing_market_snapshot")
++        series = snapshot.candle_series(context.timeframe, context.symbol)
++        if series is None or series.count < 12:
++            return no_data_package(self.manifest, context, "insufficient_candles")
++
++        lookback = max(12, int(context.parameters.get("volume_profile_lookback_candles", 96)))
++        bucket_count = max(8, min(120, int(context.parameters.get("volume_profile_buckets", 36))))
++        horizon_bars = max(1, int(context.parameters.get("volume_profile_horizon_bars", 6)))
++        candles = ordered_candles(series, lookback)
++        low = min(item.low for item in candles)
++        high = max(item.high for item in candles)
++        if low <= 0.0 or high <= low:
++            return no_data_package(self.manifest, context, "flat_or_invalid_price_range")
++
++        bucket_width = (high - low) / bucket_count
++        buckets = [0.0 for _ in range(bucket_count)]
++        for candle in candles:
++            typical = (candle.high + candle.low + candle.close) / 3.0
++            index = min(bucket_count - 1, max(0, int((typical - low) / bucket_width)))
++            buckets[index] += max(0.0, candle.volume)
++
++        total_volume = sum(buckets)
++        if total_volume <= 0.0:
++            return no_data_package(self.manifest, context, "missing_volume")
++        poc_index = max(range(bucket_count), key=lambda index: buckets[index])
++        target_volume = total_volume * 0.70
++        included = {poc_index}
++        while sum(buckets[index] for index in included) < target_volume and len(included) < bucket_count:
++            candidates = [index for index in (min(included) - 1, max(included) + 1) if 0 <= index < bucket_count]
++            if not candidates:
++                break
++            included.add(max(candidates, key=lambda index: buckets[index]))
++
++        poc_price = low + (poc_index + 0.5) * bucket_width
++        val = low + min(included) * bucket_width
++        vah = low + (max(included) + 1) * bucket_width
++        nodes = self._nodes(buckets, low, bucket_width, total_volume)
++        latest = candles[-1].close
++        profile_width_pct = safe_div(vah - val, latest, 0.0) * 100.0
++        concentration = max(buckets) / total_volume
++        confidence = clamp(0.25 + concentration * 1.8 + min(profile_width_pct / 8.0, 0.25), 0.1, 0.9)
++
++        payload: dict[str, Any] = {
++            "phenomenon": "volume_acceptance_area",
++            "lookback_candles": len(candles),
++            "bucket_count": bucket_count,
++            "poc_price": poc_price,
++            "value_area_low": val,
++            "value_area_high": vah,
++            "profile_width_pct": profile_width_pct,
++            "volume_concentration": concentration,
++            "high_volume_nodes": nodes["high"],
++            "low_volume_nodes": nodes["low"],
++            "donor_legacy_idea": "POC/VAH/VAL/nodes_without_profile_direction_vote",
++        }
++        horizon_min = horizon_bars * timeframe_to_minutes(context.timeframe)
++        return build_package(
++            manifest=self.manifest,
++            context=context,
++            payload=payload,
++            confidence=confidence,
++            quality=min(snapshot.quality.score, series.quality.score),
++            evidence_refs=evidence_refs_for_snapshot(snapshot, series=series),
++            forecast_specs=[
++                {
++                    "price_low": val,
++                    "price_high": vah,
++                    "horizon_min": horizon_min,
++                    "probability": confidence,
++                    "confidence": confidence,
++                    "direction": "VALUE_AREA_CONTEXT",
++                    "phenomenon": "volume_acceptance_area",
++                    "field_shape": "value_area_band",
++                }
++            ],
++            state_type="volume_profile_context",
++            state_value=payload,
++            ttl_sec=max(60, horizon_min * 60),
++        )
++
++    @staticmethod
++    def _nodes(buckets: list[float], low: float, width: float, total: float) -> dict[str, list[dict[str, float]]]:
++        average = total / max(1, len(buckets))
++        high_nodes = []
++        low_nodes = []
++        for index, volume in enumerate(buckets):
++            item = {"price": low + (index + 0.5) * width, "share": safe_div(volume, total)}
++            if volume >= average * 1.6:
++                high_nodes.append(item)
++            elif volume <= average * 0.45:
++                low_nodes.append(item)
++        return {"high": high_nodes[:8], "low": low_nodes[:8]}
+diff --git a/nova/analyzers/orderbook_liquidity.py b/nova/analyzers/orderbook_liquidity.py
+new file mode 100644
+index 0000000..f5032f9
+--- /dev/null
++++ b/nova/analyzers/orderbook_liquidity.py
+@@ -0,0 +1,102 @@
++"""Canonical NOVA orderbook/liquidity analyzer."""
++
++from __future__ import annotations
++
++from nova.analysis.models import EvidenceRef
++from nova.analyzers.common import build_package, clamp, evidence_refs_for_snapshot, no_data_package, safe_div
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.core.evidence import CardType
++from nova.data.synthetic_tf import timeframe_to_minutes
++
++
++class OrderbookLiquidityAnalyzer:
++    manifest = AnalyzerManifest(
++        name="orderbook_liquidity_analyzer",
++        version="0.1.0",
++        description="Observes spread, near-book imbalance, walls and thin liquidity zones.",
++        dependency_group="orderbook_liquidity",
++        required_inputs=["MarketSnapshot.orderbook"],
++        supported_timeframes=["5m"],
++        output_card_types=[CardType.FORECAST, CardType.STATE],
++        parameter_names=["orderbook_near_bps", "orderbook_wall_factor", "orderbook_horizon_bars"],
++    )
++
++    def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
++        snapshot = context.market_snapshot
++        if snapshot is None:
++            return no_data_package(self.manifest, context, "missing_market_snapshot")
++        orderbook = snapshot.orderbook
++        if orderbook is None:
++            return no_data_package(self.manifest, context, "orderbook_not_loaded")
++        if not orderbook.bids or not orderbook.asks:
++            return no_data_package(self.manifest, context, "empty_orderbook")
++        best_bid = orderbook.best_bid()
++        best_ask = orderbook.best_ask()
++        if best_bid is None or best_ask is None or best_bid.price <= 0.0 or best_ask.price < best_bid.price:
++            return no_data_package(self.manifest, context, "invalid_orderbook_top")
++
++        mid = (best_bid.price + best_ask.price) / 2.0
++        near_bps = max(1.0, float(context.parameters.get("orderbook_near_bps", 25.0)))
++        wall_factor = max(1.1, float(context.parameters.get("orderbook_wall_factor", 3.0)))
++        horizon_bars = max(1, int(context.parameters.get("orderbook_horizon_bars", 2)))
++        near_distance = mid * near_bps / 10000.0
++        near_bids = [level for level in orderbook.bids if mid - level.price <= near_distance]
++        near_asks = [level for level in orderbook.asks if level.price - mid <= near_distance]
++        bid_qty = sum(level.quantity for level in near_bids)
++        ask_qty = sum(level.quantity for level in near_asks)
++        imbalance = safe_div(bid_qty - ask_qty, bid_qty + ask_qty, 0.0)
++        spread_pct = safe_div(best_ask.price - best_bid.price, mid, 0.0) * 100.0
++        all_quantities = [level.quantity for level in [*orderbook.bids, *orderbook.asks] if level.quantity > 0.0]
++        average_qty = sum(all_quantities) / max(1, len(all_quantities))
++        bid_walls = [level for level in orderbook.bids if level.quantity >= average_qty * wall_factor]
++        ask_walls = [level for level in orderbook.asks if level.quantity >= average_qty * wall_factor]
++        nearest_bid_wall = max(bid_walls, key=lambda level: level.price, default=None)
++        nearest_ask_wall = min(ask_walls, key=lambda level: level.price, default=None)
++        liquidity_score = clamp(1.0 - min(spread_pct / 0.25, 1.0))
++        confidence = clamp(0.25 + abs(imbalance) * 0.35 + liquidity_score * 0.25 + min(len(bid_walls) + len(ask_walls), 6) * 0.025, 0.1, 0.9)
++        low = nearest_bid_wall.price if nearest_bid_wall is not None else best_bid.price
++        high = nearest_ask_wall.price if nearest_ask_wall is not None else best_ask.price
++
++        payload = {
++            "phenomenon": "visible_liquidity_topology",
++            "mid_price": mid,
++            "spread_pct": spread_pct,
++            "near_book_bps": near_bps,
++            "near_bid_qty": bid_qty,
++            "near_ask_qty": ask_qty,
++            "near_book_imbalance": imbalance,
++            "liquidity_score": liquidity_score,
++            "bid_walls": [{"price": level.price, "quantity": level.quantity} for level in bid_walls[:8]],
++            "ask_walls": [{"price": level.price, "quantity": level.quantity} for level in ask_walls[:8]],
++            "execution_risk_observation": "spread_and_visible_depth_only_not_fill_prediction",
++            "donor_legacy_idea": "imbalance/walls/SR_adjustment_without_dominant_signal",
++        }
++        horizon_min = horizon_bars * timeframe_to_minutes(context.timeframe)
++        return build_package(
++            manifest=self.manifest,
++            context=context,
++            payload=payload,
++            confidence=confidence,
++            quality=min(snapshot.quality.score, orderbook.quality.score),
++            evidence_refs=evidence_refs_for_snapshot(
++                snapshot,
++                extra=[EvidenceRef("orderbook_snapshot", orderbook.snapshot_id, "Visible orderbook snapshot.")],
++            ),
++            forecast_specs=[
++                {
++                    "price_low": low,
++                    "price_high": high,
++                    "horizon_min": horizon_min,
++                    "probability": confidence,
++                    "confidence": confidence,
++                    "direction": "LIQUIDITY_CONTEXT",
++                    "phenomenon": "visible_liquidity_topology",
++                    "field_shape": "wall_to_wall_band",
++                    "weight": 0.6,
++                }
++            ],
++            state_type="liquidity_context",
++            state_value=payload,
++            state_severity="WARN" if spread_pct > 0.20 else "INFO",
++            ttl_sec=max(60, horizon_min * 60),
++        )
+diff --git a/nova/analyzers/volatility_regime.py b/nova/analyzers/volatility_regime.py
+new file mode 100644
+index 0000000..f0e10a3
+--- /dev/null
++++ b/nova/analyzers/volatility_regime.py
+@@ -0,0 +1,104 @@
++"""Canonical NOVA volatility/regime analyzer."""
++
++from __future__ import annotations
++
++from nova.analyzers.common import build_package, clamp, evidence_refs_for_snapshot, no_data_package, ordered_candles, safe_div
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.core.evidence import CardType
++from nova.data.synthetic_tf import timeframe_to_minutes
++
++
++class VolatilityRegimeAnalyzer:
++    manifest = AnalyzerManifest(
++        name="volatility_regime_analyzer",
++        version="0.1.0",
++        description="Observes ATR expansion/compression and directional regime without voting.",
++        dependency_group="ohlcv_regime",
++        required_inputs=["MarketSnapshot.candles"],
++        supported_timeframes=["5m"],
++        output_card_types=[CardType.STATE, CardType.FORECAST],
++        parameter_names=["regime_lookback_candles", "regime_atr_period", "regime_horizon_bars"],
++    )
++
++    def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
++        snapshot = context.market_snapshot
++        if snapshot is None:
++            return no_data_package(self.manifest, context, "missing_market_snapshot")
++        series = snapshot.candle_series(context.timeframe, context.symbol)
++        if series is None or series.count < 30:
++            return no_data_package(self.manifest, context, "insufficient_candles")
++        lookback = max(30, int(context.parameters.get("regime_lookback_candles", 120)))
++        period = max(5, int(context.parameters.get("regime_atr_period", 14)))
++        horizon_bars = max(1, int(context.parameters.get("regime_horizon_bars", 6)))
++        candles = ordered_candles(series, lookback)
++        atr_values = self._atr_series(candles, period)
++        if not atr_values:
++            return no_data_package(self.manifest, context, "insufficient_atr_window")
++        latest = candles[-1].close
++        atr = atr_values[-1]
++        atr_pct = safe_div(atr, latest, 0.0) * 100.0
++        median_atr = sorted(atr_values)[len(atr_values) // 2]
++        atr_ratio = safe_div(atr, median_atr, 1.0)
++        short_ma = sum(item.close for item in candles[-9:]) / min(9, len(candles))
++        long_ma = sum(item.close for item in candles[-21:]) / min(21, len(candles))
++        trend_strength = safe_div(short_ma - long_ma, latest, 0.0) * 100.0
++        recent_range = max(item.high for item in candles[-period:]) - min(item.low for item in candles[-period:])
++        regime = self._regime(atr_ratio, trend_strength)
++        confidence = clamp(0.25 + min(abs(trend_strength) / 1.5, 0.35) + min(abs(atr_ratio - 1.0), 1.0) * 0.25 + min(atr_pct / 2.5, 0.15), 0.1, 0.9)
++        band = max(atr * 1.5, recent_range * 0.35)
++        payload = {
++            "phenomenon": "volatility_regime_state",
++            "regime": regime,
++            "atr": atr,
++            "atr_pct": atr_pct,
++            "atr_ratio_to_median": atr_ratio,
++            "ma9": short_ma,
++            "ma21": long_ma,
++            "trend_strength_pct": trend_strength,
++            "recent_range": recent_range,
++            "donor_legacy_idea": "ADX/ATR/regime_labels_without_trade_signal",
++        }
++        horizon_min = horizon_bars * timeframe_to_minutes(context.timeframe)
++        return build_package(
++            manifest=self.manifest,
++            context=context,
++            payload=payload,
++            confidence=confidence,
++            quality=min(snapshot.quality.score, series.quality.score),
++            evidence_refs=evidence_refs_for_snapshot(snapshot, series=series),
++            forecast_specs=[
++                {
++                    "price_low": max(0.00000001, latest - band),
++                    "price_high": latest + band,
++                    "horizon_min": horizon_min,
++                    "probability": confidence,
++                    "confidence": confidence,
++                    "direction": "REGIME_CONTEXT",
++                    "phenomenon": "volatility_regime_state",
++                    "field_shape": "atr_envelope",
++                    "weight": 0.45,
++                }
++            ],
++            state_type="volatility_regime_context",
++            state_value=payload,
++            state_severity="WARN" if regime == "HIGH_VOLATILITY" else "INFO",
++            ttl_sec=max(60, horizon_min * 60),
++        )
++
++    @staticmethod
++    def _atr_series(candles, period: int) -> list[float]:
++        true_ranges = []
++        for index, candle in enumerate(candles):
++            previous_close = candles[index - 1].close if index else candle.close
++            true_ranges.append(max(candle.high - candle.low, abs(candle.high - previous_close), abs(candle.low - previous_close)))
++        return [sum(true_ranges[index - period + 1 : index + 1]) / period for index in range(period - 1, len(true_ranges))]
++
++    @staticmethod
++    def _regime(atr_ratio: float, trend_strength: float) -> str:
++        if atr_ratio >= 1.65:
++            return "HIGH_VOLATILITY"
++        if abs(trend_strength) < 0.12 and atr_ratio < 1.15:
++            return "RANGING"
++        if trend_strength > 0.0:
++            return "TREND_UP_CONTEXT"
++        return "TREND_DOWN_CONTEXT"
+diff --git a/nova/analyzers/fractal_structure.py b/nova/analyzers/fractal_structure.py
+new file mode 100644
+index 0000000..d48ce95
+--- /dev/null
++++ b/nova/analyzers/fractal_structure.py
+@@ -0,0 +1,112 @@
++"""Canonical NOVA fractal/structure analyzer."""
++
++from __future__ import annotations
++
++from nova.analyzers.common import build_package, clamp, evidence_refs_for_snapshot, no_data_package, ordered_candles, safe_div
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.core.evidence import CardType
++from nova.data.synthetic_tf import timeframe_to_minutes
++
++
++class FractalStructureAnalyzer:
++    manifest = AnalyzerManifest(
++        name="fractal_structure_analyzer",
++        version="0.1.0",
++        description="Observes Williams fractals, clusters and invalidation topology.",
++        dependency_group="fractal_ohlcv_structure",
++        required_inputs=["MarketSnapshot.candles"],
++        supported_timeframes=["5m"],
++        output_card_types=[CardType.FORECAST, CardType.STATE],
++        parameter_names=["fractal_lookback_candles", "fractal_cluster_threshold_pct", "fractal_horizon_bars"],
++    )
++
++    def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
++        snapshot = context.market_snapshot
++        if snapshot is None:
++            return no_data_package(self.manifest, context, "missing_market_snapshot")
++        series = snapshot.candle_series(context.timeframe, context.symbol)
++        if series is None or series.count < 9:
++            return no_data_package(self.manifest, context, "insufficient_candles")
++        lookback = max(9, int(context.parameters.get("fractal_lookback_candles", 120)))
++        threshold_pct = max(0.05, float(context.parameters.get("fractal_cluster_threshold_pct", 0.35)))
++        horizon_bars = max(1, int(context.parameters.get("fractal_horizon_bars", 8)))
++        candles = ordered_candles(series, lookback)
++        highs, lows = self._fractals(candles)
++        if not highs and not lows:
++            return no_data_package(self.manifest, context, "no_confirmed_fractals")
++        latest = candles[-1].close
++        high_clusters = self._clusters(highs, latest, threshold_pct)
++        low_clusters = self._clusters(lows, latest, threshold_pct)
++        nearest_resistance = min((item["price"] for item in high_clusters if item["price"] >= latest), default=max(highs, default=latest))
++        nearest_support = max((item["price"] for item in low_clusters if item["price"] <= latest), default=min(lows, default=latest))
++        low = max(0.00000001, nearest_support)
++        high = max(low, nearest_resistance)
++        density = clamp((len(highs) + len(lows)) / max(1, len(candles)) * 3.0)
++        cluster_strength = clamp((sum(item["count"] for item in high_clusters + low_clusters)) / max(1, len(highs) + len(lows)))
++        confidence = clamp(0.25 + density * 0.25 + cluster_strength * 0.30 + min(safe_div(high - low, latest, 0.0) * 100.0 / 3.0, 0.20), 0.1, 0.9)
++        payload = {
++            "phenomenon": "confirmed_fractal_structure",
++            "fractal_high_count": len(highs),
++            "fractal_low_count": len(lows),
++            "high_clusters": high_clusters[:8],
++            "low_clusters": low_clusters[:8],
++            "nearest_support": nearest_support,
++            "nearest_resistance": nearest_resistance,
++            "structure_width_pct": safe_div(high - low, latest, 0.0) * 100.0,
++            "invalidation_candidates": {"below_support": nearest_support, "above_resistance": nearest_resistance},
++            "donor_legacy_idea": "Williams_fractals/clusters_without_trend_signal",
++        }
++        horizon_min = horizon_bars * timeframe_to_minutes(context.timeframe)
++        return build_package(
++            manifest=self.manifest,
++            context=context,
++            payload=payload,
++            confidence=confidence,
++            quality=min(snapshot.quality.score, series.quality.score),
++            evidence_refs=evidence_refs_for_snapshot(snapshot, series=series),
++            forecast_specs=[
++                {
++                    "price_low": low,
++                    "price_high": high,
++                    "horizon_min": horizon_min,
++                    "probability": confidence,
++                    "confidence": confidence,
++                    "direction": "FRACTAL_STRUCTURE_CONTEXT",
++                    "phenomenon": "confirmed_fractal_structure",
++                    "field_shape": "support_resistance_band",
++                    "invalidation_price": nearest_support if latest >= (low + high) / 2.0 else nearest_resistance,
++                }
++            ],
++            state_type="fractal_structure_context",
++            state_value=payload,
++            ttl_sec=max(60, horizon_min * 60),
++        )
++
++    @staticmethod
++    def _fractals(candles) -> tuple[list[float], list[float]]:
++        highs = []
++        lows = []
++        for index in range(2, len(candles) - 2):
++            window = candles[index - 2 : index + 3]
++            candle = candles[index]
++            if candle.high == max(item.high for item in window) and sum(1 for item in window if item.high == candle.high) == 1:
++                highs.append(candle.high)
++            if candle.low == min(item.low for item in window) and sum(1 for item in window if item.low == candle.low) == 1:
++                lows.append(candle.low)
++        return highs, lows
++
++    @staticmethod
++    def _clusters(levels: list[float], reference: float, threshold_pct: float) -> list[dict[str, float]]:
++        if not levels:
++            return []
++        threshold = reference * threshold_pct / 100.0
++        clusters = []
++        current = [sorted(levels)[0]]
++        for level in sorted(levels)[1:]:
++            if abs(level - (sum(current) / len(current))) <= threshold:
++                current.append(level)
++            else:
++                clusters.append({"price": sum(current) / len(current), "count": float(len(current))})
++                current = [level]
++        clusters.append({"price": sum(current) / len(current), "count": float(len(current))})
++        return sorted(clusters, key=lambda item: item["count"], reverse=True)
+diff --git a/nova/analyzers/pattern_formation.py b/nova/analyzers/pattern_formation.py
+new file mode 100644
+index 0000000..83b58d8
+--- /dev/null
++++ b/nova/analyzers/pattern_formation.py
+@@ -0,0 +1,118 @@
++"""Canonical NOVA pattern/formations analyzer."""
++
++from __future__ import annotations
++
++from nova.analyzers.common import build_package, clamp, evidence_refs_for_snapshot, no_data_package, ordered_candles, safe_div
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.core.evidence import CardType
++from nova.data.synthetic_tf import timeframe_to_minutes
++
++
++class PatternFormationAnalyzer:
++    manifest = AnalyzerManifest(
++        name="pattern_formation_analyzer",
++        version="0.1.0",
++        description="Observes candlestick and chart formations as structural hypotheses.",
++        dependency_group="pattern_ohlcv_structure",
++        required_inputs=["MarketSnapshot.candles"],
++        supported_timeframes=["5m"],
++        output_card_types=[CardType.FORECAST, CardType.STATE],
++        parameter_names=["pattern_lookback_candles", "pattern_horizon_bars"],
++    )
++
++    def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
++        snapshot = context.market_snapshot
++        if snapshot is None:
++            return no_data_package(self.manifest, context, "missing_market_snapshot")
++        series = snapshot.candle_series(context.timeframe, context.symbol)
++        if series is None or series.count < 20:
++            return no_data_package(self.manifest, context, "insufficient_candles")
++        lookback = max(20, int(context.parameters.get("pattern_lookback_candles", 80)))
++        horizon_bars = max(1, int(context.parameters.get("pattern_horizon_bars", 5)))
++        candles = ordered_candles(series, lookback)
++        candle_patterns = self._candlestick_patterns(candles)
++        chart_patterns = self._chart_patterns(candles)
++        if not candle_patterns and not chart_patterns:
++            return no_data_package(self.manifest, context, "no_recognized_formations")
++        latest = candles[-1].close
++        local_low = min(item.low for item in candles[-20:])
++        local_high = max(item.high for item in candles[-20:])
++        formation_strength = clamp((len(candle_patterns) * 0.12) + (len(chart_patterns) * 0.22))
++        width_pct = safe_div(local_high - local_low, latest, 0.0) * 100.0
++        confidence = clamp(0.2 + formation_strength * 0.45 + min(width_pct / 4.0, 0.25), 0.1, 0.9)
++        payload = {
++            "phenomenon": "pattern_formation_hypotheses",
++            "candlestick_patterns": candle_patterns,
++            "chart_patterns": chart_patterns,
++            "local_low": local_low,
++            "local_high": local_high,
++            "formation_strength": formation_strength,
++            "donor_legacy_idea": "candles/chart_patterns_without_buy_sell_aggregation",
++        }
++        horizon_min = horizon_bars * timeframe_to_minutes(context.timeframe)
++        return build_package(
++            manifest=self.manifest,
++            context=context,
++            payload=payload,
++            confidence=confidence,
++            quality=min(snapshot.quality.score, series.quality.score),
++            evidence_refs=evidence_refs_for_snapshot(snapshot, series=series),
++            forecast_specs=[
++                {
++                    "price_low": local_low,
++                    "price_high": local_high,
++                    "horizon_min": horizon_min,
++                    "probability": confidence,
++                    "confidence": confidence,
++                    "direction": "FORMATION_CONTEXT",
++                    "phenomenon": "pattern_formation_hypotheses",
++                    "field_shape": "formation_range",
++                    "weight": 0.55,
++                }
++            ],
++            state_type="pattern_formation_context",
++            state_value=payload,
++            ttl_sec=max(60, horizon_min * 60),
++        )
++
++    @staticmethod
++    def _candlestick_patterns(candles) -> list[dict[str, float | str]]:
++        patterns = []
++        last = candles[-1]
++        prev = candles[-2]
++        body = abs(last.close - last.open)
++        range_ = max(last.high - last.low, 0.00000001)
++        upper = last.high - max(last.open, last.close)
++        lower = min(last.open, last.close) - last.low
++        if body / range_ <= 0.12:
++            patterns.append({"name": "doji", "strength": 1.0 - body / range_})
++        if lower >= body * 2.0 and upper <= body * 0.8:
++            patterns.append({"name": "hammer_like_rejection", "strength": clamp(lower / range_)})
++        if upper >= body * 2.0 and lower <= body * 0.8:
++            patterns.append({"name": "shooting_star_like_rejection", "strength": clamp(upper / range_)})
++        if last.close > last.open and prev.close < prev.open and last.close >= prev.open and last.open <= prev.close:
++            patterns.append({"name": "bullish_engulfing_shape", "strength": clamp(body / range_)})
++        if last.close < last.open and prev.close > prev.open and last.open >= prev.close and last.close <= prev.open:
++            patterns.append({"name": "bearish_engulfing_shape", "strength": clamp(body / range_)})
++        if last.high <= prev.high and last.low >= prev.low:
++            patterns.append({"name": "inside_bar_compression", "strength": clamp(1.0 - range_ / max(prev.high - prev.low, 0.00000001))})
++        if last.high >= prev.high and last.low <= prev.low:
++            patterns.append({"name": "outside_bar_expansion", "strength": clamp(range_ / max(prev.high - prev.low, 0.00000001) - 1.0)})
++        return patterns
++
++    @staticmethod
++    def _chart_patterns(candles) -> list[dict[str, float | str]]:
++        recent = candles[-30:]
++        highs = sorted((item.high for item in recent), reverse=True)[:3]
++        lows = sorted(item.low for item in recent)[:3]
++        close = recent[-1].close
++        patterns = []
++        if len(highs) >= 2 and abs(highs[0] - highs[1]) / close <= 0.004:
++            patterns.append({"name": "double_top_zone", "level": (highs[0] + highs[1]) / 2.0})
++        if len(lows) >= 2 and abs(lows[0] - lows[1]) / close <= 0.004:
++            patterns.append({"name": "double_bottom_zone", "level": (lows[0] + lows[1]) / 2.0})
++        first_range = max(item.high for item in recent[:10]) - min(item.low for item in recent[:10])
++        last_range = max(item.high for item in recent[-10:]) - min(item.low for item in recent[-10:])
++        if last_range < first_range * 0.65:
++            patterns.append({"name": "range_compression", "compression_ratio": safe_div(last_range, first_range, 0.0)})
++        return patterns
+diff --git a/nova/analyzers/btc_correlation.py b/nova/analyzers/btc_correlation.py
+new file mode 100644
+index 0000000..63bfa30
+--- /dev/null
++++ b/nova/analyzers/btc_correlation.py
+@@ -0,0 +1,127 @@
++"""Canonical NOVA BTC correlation/context analyzer."""
++
++from __future__ import annotations
++
++import math
++
++from nova.analyzers.common import build_package, clamp, evidence_refs_for_snapshot, no_data_package, ordered_candles, safe_div
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.core.evidence import CardType
++from nova.data.synthetic_tf import timeframe_to_minutes
++
++
++class BTCCorrelationAnalyzer:
++    manifest = AnalyzerManifest(
++        name="btc_correlation_analyzer",
++        version="0.1.0",
++        description="Observes BTC coupling, decoupling and lag context from related candles.",
++        dependency_group="btc_related_ohlcv",
++        required_inputs=["MarketSnapshot.candles", "MarketSnapshot.related_candles.BTCUSDT"],
++        supported_timeframes=["5m"],
++        output_card_types=[CardType.STATE, CardType.FORECAST],
++        parameter_names=["btc_correlation_lookback_candles", "btc_correlation_horizon_bars"],
++    )
++
++    def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
++        snapshot = context.market_snapshot
++        if snapshot is None:
++            return no_data_package(self.manifest, context, "missing_market_snapshot")
++        target = snapshot.candle_series(context.timeframe, context.symbol)
++        btc = snapshot.candle_series(context.timeframe, "BTCUSDT")
++        if target is None or target.count < 20:
++            return no_data_package(self.manifest, context, "insufficient_target_candles")
++        if btc is None or btc.count < 20:
++            return no_data_package(self.manifest, context, "missing_btc_related_candles")
++        lookback = max(20, int(context.parameters.get("btc_correlation_lookback_candles", 96)))
++        horizon_bars = max(1, int(context.parameters.get("btc_correlation_horizon_bars", 6)))
++        target_candles = ordered_candles(target, lookback)
++        btc_candles = ordered_candles(btc, lookback)
++        target_returns = self._returns(target_candles)
++        btc_returns = self._returns(btc_candles)
++        size = min(len(target_returns), len(btc_returns))
++        if size < 12:
++            return no_data_package(self.manifest, context, "insufficient_return_overlap")
++        target_returns = target_returns[-size:]
++        btc_returns = btc_returns[-size:]
++        correlation = self._pearson(target_returns, btc_returns)
++        lag_map = {lag: self._lagged_corr(target_returns, btc_returns, lag) for lag in [-2, -1, 0, 1, 2]}
++        best_lag = max(lag_map, key=lambda lag: abs(lag_map[lag]))
++        target_change = safe_div(target_candles[-1].close - target_candles[0].open, target_candles[0].open, 0.0) * 100.0
++        btc_change = safe_div(btc_candles[-1].close - btc_candles[0].open, btc_candles[0].open, 0.0) * 100.0
++        divergence = target_change - btc_change
++        coupling = self._coupling(correlation, divergence)
++        latest = target_candles[-1].close
++        move_hint = abs(correlation) * abs(btc_change) / 100.0 * latest
++        width = max(latest * 0.002, move_hint)
++        confidence = clamp(0.2 + abs(correlation) * 0.45 + min(abs(divergence) / 3.0, 0.25) + (0.1 if abs(lag_map[best_lag]) > abs(correlation) else 0.0), 0.1, 0.9)
++        payload = {
++            "phenomenon": "btc_coupling_context",
++            "correlation": correlation,
++            "coupling_state": coupling,
++            "lag_correlation_map": lag_map,
++            "best_lag_bars": best_lag,
++            "target_change_pct": target_change,
++            "btc_change_pct": btc_change,
++            "divergence_pct": divergence,
++            "donor_legacy_idea": "BTC influence/lag/divergence_without_permission_signal",
++        }
++        horizon_min = horizon_bars * timeframe_to_minutes(context.timeframe)
++        return build_package(
++            manifest=self.manifest,
++            context=context,
++            payload=payload,
++            confidence=confidence,
++            quality=min(snapshot.quality.score, target.quality.score, btc.quality.score),
++            evidence_refs=evidence_refs_for_snapshot(snapshot, series=target, extra=evidence_refs_for_snapshot(snapshot, series=btc)[1:]),
++            forecast_specs=[
++                {
++                    "price_low": max(0.00000001, latest - width),
++                    "price_high": latest + width,
++                    "horizon_min": horizon_min,
++                    "probability": confidence,
++                    "confidence": confidence,
++                    "direction": "BTC_CONTEXT",
++                    "phenomenon": "btc_coupling_context",
++                    "field_shape": "coupling_envelope",
++                    "weight": 0.35,
++                }
++            ],
++            state_type="btc_correlation_context",
++            state_value=payload,
++            ttl_sec=max(60, horizon_min * 60),
++        )
++
++    @staticmethod
++    def _returns(candles) -> list[float]:
++        return [safe_div(candles[index].close - candles[index - 1].close, candles[index - 1].close, 0.0) for index in range(1, len(candles))]
++
++    @staticmethod
++    def _pearson(left: list[float], right: list[float]) -> float:
++        size = min(len(left), len(right))
++        if size < 2:
++            return 0.0
++        left = left[-size:]
++        right = right[-size:]
++        lm = sum(left) / size
++        rm = sum(right) / size
++        covariance = sum((left[i] - lm) * (right[i] - rm) for i in range(size))
++        lv = math.sqrt(sum((item - lm) ** 2 for item in left))
++        rv = math.sqrt(sum((item - rm) ** 2 for item in right))
++        return clamp(safe_div(covariance, lv * rv, 0.0), -1.0, 1.0)
++
++    def _lagged_corr(self, target: list[float], btc: list[float], lag: int) -> float:
++        if lag > 0:
++            return self._pearson(target[lag:], btc[:-lag])
++        if lag < 0:
++            return self._pearson(target[:lag], btc[-lag:])
++        return self._pearson(target, btc)
++
++    @staticmethod
++    def _coupling(correlation: float, divergence: float) -> str:
++        if abs(correlation) >= 0.65 and abs(divergence) < 1.5:
++            return "COUPLED"
++        if abs(correlation) < 0.25:
++            return "DECOUPLED"
++        if abs(divergence) >= 2.0:
++            return "DIVERGENT"
++        return "PARTIAL_COUPLING"
+diff --git a/nova/analyzers/derivatives_context.py b/nova/analyzers/derivatives_context.py
+new file mode 100644
+index 0000000..1eb6aa0
+--- /dev/null
++++ b/nova/analyzers/derivatives_context.py
+@@ -0,0 +1,81 @@
++"""Canonical NOVA derivatives context analyzer."""
++
++from __future__ import annotations
++
++from nova.analysis.models import EvidenceRef
++from nova.analyzers.common import build_package, clamp, evidence_refs_for_snapshot, no_data_package
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.core.evidence import CardType
++from nova.data.synthetic_tf import timeframe_to_minutes
++
++
++class DerivativesContextAnalyzer:
++    manifest = AnalyzerManifest(
++        name="derivatives_context_analyzer",
++        version="0.1.0",
++        description="Observes funding, open interest and long/short crowding when derivatives data exists.",
++        dependency_group="derivatives_context",
++        required_inputs=["MarketSnapshot.derivatives"],
++        supported_timeframes=["5m"],
++        output_card_types=[CardType.STATE],
++        parameter_names=["derivatives_funding_extreme_abs", "derivatives_horizon_bars"],
++    )
++
++    def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
++        snapshot = context.market_snapshot
++        if snapshot is None:
++            return no_data_package(self.manifest, context, "missing_market_snapshot")
++        derivatives = snapshot.derivatives
++        if derivatives is None:
++            return no_data_package(self.manifest, context, "derivatives_not_loaded")
++        has_any = derivatives.funding_rate is not None or derivatives.open_interest is not None or derivatives.long_short_ratio is not None
++        if not has_any:
++            return no_data_package(self.manifest, context, "empty_derivatives_snapshot")
++        funding = derivatives.funding_rate.funding_rate if derivatives.funding_rate else None
++        oi = derivatives.open_interest.open_interest if derivatives.open_interest else None
++        ratio = derivatives.long_short_ratio.long_short_ratio if derivatives.long_short_ratio else None
++        extreme = max(0.0001, float(context.parameters.get("derivatives_funding_extreme_abs", 0.0008)))
++        funding_pressure = None if funding is None else clamp(abs(funding) / extreme)
++        crowding = None if ratio is None else clamp(abs(ratio - 1.0) / 1.0)
++        squeeze_risk = clamp((funding_pressure or 0.0) * 0.45 + (crowding or 0.0) * 0.45 + (0.10 if oi is not None and oi > 0 else 0.0))
++        confidence = clamp(0.2 + (0.25 if funding is not None else 0.0) + (0.20 if oi is not None else 0.0) + (0.20 if ratio is not None else 0.0) + squeeze_risk * 0.20, 0.1, 0.9)
++        payload = {
++            "phenomenon": "derivatives_crowding_context",
++            "funding_rate": funding,
++            "open_interest": oi,
++            "long_short_ratio": ratio,
++            "funding_pressure": funding_pressure,
++            "crowding_pressure": crowding,
++            "squeeze_risk_observation": squeeze_risk,
++            "dominant_risk": self._dominant_risk(funding, ratio),
++            "donor_legacy_idea": "funding/OI/ratio/liquidation_context_without_sentiment_score_permission",
++        }
++        horizon_min = max(1, int(context.parameters.get("derivatives_horizon_bars", 6))) * timeframe_to_minutes(context.timeframe)
++        return build_package(
++            manifest=self.manifest,
++            context=context,
++            payload=payload,
++            confidence=confidence,
++            quality=min(snapshot.quality.score, derivatives.quality.score),
++            evidence_refs=evidence_refs_for_snapshot(
++                snapshot,
++                extra=[EvidenceRef("derivatives_snapshot", derivatives.snapshot_id, "Derivatives context snapshot.")],
++            ),
++            forecast_specs=[],
++            state_type="derivatives_context",
++            state_value=payload,
++            state_severity="WARN" if squeeze_risk >= 0.65 else "INFO",
++            ttl_sec=max(60, horizon_min * 60),
++        )
++
++    @staticmethod
++    def _dominant_risk(funding: float | None, ratio: float | None) -> str:
++        if funding is None and ratio is None:
++            return "UNKNOWN"
++        if funding is not None and funding > 0.0 and ratio is not None and ratio > 1.3:
++            return "LONG_CROWDING"
++        if funding is not None and funding < 0.0 and ratio is not None and ratio < 0.75:
++            return "SHORT_CROWDING"
++        if funding is not None and abs(funding) > 0.0008:
++            return "FUNDING_PRESSURE"
++        return "DERIVATIVES_CONTEXT_PRESENT"
+diff --git a/nova/analyzers/news_context.py b/nova/analyzers/news_context.py
+new file mode 100644
+index 0000000..772885f
+--- /dev/null
++++ b/nova/analyzers/news_context.py
+@@ -0,0 +1,83 @@
++"""Canonical NOVA news/context analyzer."""
++
++from __future__ import annotations
++
++from nova.analysis.models import EvidenceRef
++from nova.analyzers.common import build_package, clamp, evidence_refs_for_snapshot, no_data_package
++from nova.analyzers.contracts import AnalysisPackage, AnalyzerContext, AnalyzerManifest
++from nova.core.evidence import CardType
++from nova.data.synthetic_tf import timeframe_to_minutes
++
++
++class NewsContextAnalyzer:
++    manifest = AnalyzerManifest(
++        name="news_context_analyzer",
++        version="0.1.0",
++        description="Observes available news/event risk context without creating market signals.",
++        dependency_group="news_context",
++        required_inputs=["MarketSnapshot.news"],
++        supported_timeframes=["5m"],
++        output_card_types=[CardType.STATE],
++        parameter_names=["news_horizon_bars"],
++    )
++
++    def analyze(self, context: AnalyzerContext) -> AnalysisPackage:
++        snapshot = context.market_snapshot
++        if snapshot is None:
++            return no_data_package(self.manifest, context, "missing_market_snapshot")
++        batch = snapshot.news
++        if batch is None:
++            return no_data_package(self.manifest, context, "news_not_loaded")
++        relevant = [
++            item for item in batch.items
++            if not item.symbols or context.symbol in item.symbols or snapshot.primary_symbol in item.symbols
++        ]
++        if not relevant:
++            return no_data_package(self.manifest, context, "no_relevant_news_items")
++        topic_counts: dict[str, int] = {}
++        for item in relevant:
++            for topic in item.topics:
++                topic_counts[topic] = topic_counts.get(topic, 0) + 1
++        avg_sentiment = sum(item.sentiment_score for item in relevant) / len(relevant)
++        max_impact = max(item.impact_score for item in relevant)
++        event_risk = clamp((abs(avg_sentiment) * 0.35) + (max_impact * 0.55) + min(len(relevant) / 20.0, 0.10))
++        confidence = clamp(0.2 + min(len(relevant) / 10.0, 0.30) + max_impact * 0.35 + batch.quality.score * 0.15, 0.1, 0.9)
++        payload = {
++            "phenomenon": "news_event_context",
++            "relevant_item_count": len(relevant),
++            "average_sentiment_observation": avg_sentiment,
++            "max_impact_score": max_impact,
++            "event_risk_observation": event_risk,
++            "topic_counts": topic_counts,
++            "top_items": [
++                {
++                    "item_id": item.item_id,
++                    "title": item.title,
++                    "source_name": item.source_name,
++                    "published_at": item.published_at,
++                    "sentiment_score": item.sentiment_score,
++                    "impact_score": item.impact_score,
++                    "topics": item.topics,
++                    "url": item.url,
++                }
++                for item in relevant[:8]
++            ],
++            "donor_legacy_idea": "freshness/topic/impact_context_without_news_direction_signal",
++        }
++        horizon_min = max(1, int(context.parameters.get("news_horizon_bars", 12))) * timeframe_to_minutes(context.timeframe)
++        return build_package(
++            manifest=self.manifest,
++            context=context,
++            payload=payload,
++            confidence=confidence,
++            quality=min(snapshot.quality.score, batch.quality.score),
++            evidence_refs=evidence_refs_for_snapshot(
++                snapshot,
++                extra=[EvidenceRef("news_batch", batch.batch_id, "News batch available in MarketSnapshot.")],
++            ),
++            forecast_specs=[],
++            state_type="news_event_context",
++            state_value=payload,
++            state_severity="WARN" if event_risk >= 0.65 else "INFO",
++            ttl_sec=max(60, horizon_min * 60),
++        )
+diff --git a/nova/autotune/trust_engine.py b/nova/autotune/trust_engine.py
+new file mode 100644
+index 0000000..15c6450
+--- /dev/null
++++ b/nova/autotune/trust_engine.py
+@@ -0,0 +1,81 @@
++"""Trust accounting from traceable scenario outcomes.
++
++The engine produces conservative profile-change proposals. It does not rewrite
++Canon, safety limits, secrets or executor mode.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Any, Iterable, Optional
++
++from nova.autotune.models import AutotuneRecommendation
++from nova.shadow.outcome import OutcomeResult, ScenarioOutcome
++
++
++@dataclass(frozen=True)
++class TrustUpdateResult:
++    recommendation: Optional[AutotuneRecommendation]
++    sample_count: int
++    win_count: int
++    loss_count: int
++    flat_count: int
++    proposed_trust_points: float
++    reason: str
++
++
++class TrustEngine:
++    def build_recommendation(
++        self,
++        *,
++        target_profile_id: str,
++        profile_values: dict[str, Any],
++        outcomes: Iterable[ScenarioOutcome],
++        evidence_ids: list[str] | None = None,
++    ) -> TrustUpdateResult:
++        samples = list(outcomes)
++        sample_count = len(samples)
++        current = float(
++            profile_values.get(
++                "market_structure_analyzer_trust_points",
++                profile_values.get("analyzer_initial_trust_points", 0.1),
++            )
++        )
++        minimum = float(profile_values.get("analyzer_initial_trust_points", 0.1))
++        minimum_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
++        if sample_count <= 0:
++            return TrustUpdateResult(None, 0, 0, 0, 0, current, "no_traceable_outcomes")
++
++        wins = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_WIN)
++        losses = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_LOSS)
++        flats = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_FLAT)
++        winrate = wins / sample_count
++        avg_net_pnl = sum(outcome.net_pnl_pct for outcome in samples) / sample_count
++        maturity = min(1.0, sample_count / max(1, minimum_samples))
++        directional_score = (winrate - 0.5) * 0.20
++        pnl_score = max(-0.05, min(0.05, avg_net_pnl / 100.0))
++        proposed = max(minimum, min(0.9, current + (directional_score + pnl_score) * maturity))
++
++        if abs(proposed - current) < 0.005:
++            return TrustUpdateResult(None, sample_count, wins, losses, flats, proposed, "trust_delta_too_small")
++
++        recommendation = AutotuneRecommendation(
++            target_profile_id=target_profile_id,
++            parameter_changes={
++                "market_structure_analyzer_trust_points": round(proposed, 4),
++                "shadow_outcome_sample_count": sample_count,
++            },
++            evidence_ids=evidence_ids or [],
++            sample_size=sample_count,
++            confidence=maturity,
++            reason=(
++                "traceable_outcome_trust_update; "
++                f"wins={wins}, losses={losses}, flats={flats}, avg_net_pnl={avg_net_pnl:.4f}, maturity={maturity:.4f}"
++            ),
++            target_parameter_specs=[
++                "market_structure_analyzer_trust_points",
++                "shadow_outcome_sample_count",
++            ],
++            rollback_condition="owner_revert_or_negative_traceable_outcome_drift",
++        )
++        return TrustUpdateResult(recommendation, sample_count, wins, losses, flats, proposed, "recommendation_created")
+diff --git a/nova/shadow/outcome_recorder.py b/nova/shadow/outcome_recorder.py
+new file mode 100644
+index 0000000..5ce841f
+--- /dev/null
++++ b/nova/shadow/outcome_recorder.py
+@@ -0,0 +1,247 @@
++"""Append-only outcome recorder for runtime, shadow and lab scenarios.
++
++This module records traceable facts. It does not decide, approve execution,
++change confidence, or tune parameters.
++"""
++
++from __future__ import annotations
++
++from dataclasses import asdict
++from typing import Any, Optional
++
++from nova.autotune.models import AutotuneEvidence
++from nova.core.events import Event, EventTypes
++from nova.core.history_db import HistoryDB
++from nova.decision.trade_plan import TradePlan
++from nova.execution.models import ExecutionAttempt, ExecutorResultStatus
++from nova.risk.models import RiskDecision
++from nova.shadow.outcome import OutcomeResult, ResolutionMethod, ScenarioOutcome
++from nova.shadow.scenario import ScenarioRequest, ScenarioSource
++
++
++class OutcomeRecorder:
++    def __init__(self, history_db: HistoryDB) -> None:
++        self.history_db = history_db
++
++    def record_execution_ack(
++        self,
++        *,
++        run_id: str,
++        cycle_id: str,
++        scenario_id: str,
++        plan: TradePlan,
++        risk_decision: RiskDecision,
++        attempt: ExecutionAttempt,
++        evidence: AutotuneEvidence,
++    ) -> tuple[ScenarioOutcome, Event]:
++        result = self._execution_result(attempt)
++        quality = 1.0 if attempt.result.status == ExecutorResultStatus.ACCEPTED else 0.8
++        outcome = ScenarioOutcome(
++            scenario_id=scenario_id,
++            source_type=ScenarioSource.REAL_EXECUTION,
++            result=result,
++            gross_pnl_pct=0.0,
++            net_pnl_pct=0.0,
++            mfe_pct=0.0,
++            mae_pct=0.0,
++            duration_sec=0,
++            resolution_method=ResolutionMethod.EXECUTION_ACK,
++            quality=quality,
++            planned_costs=self._planned_costs(plan),
++            actual_costs={},
++            payload=self._plan_payload(plan),
++            notes="Execution acknowledgement only; position PnL outcome is not resolved here.",
++        )
++        event = self._persist(
++            outcome=outcome,
++            run_id=run_id,
++            cycle_id=cycle_id,
++            source="OutcomeRecorder",
++            payload_extra={
++                "plan_id": plan.plan_id,
++                "risk_decision_id": risk_decision.risk_decision_id,
++                "executor_result_id": attempt.result.result_id,
++                "autotune_evidence_id": evidence.evidence_id,
++                "traceable_outcome_sample_count": self.history_db.count_traceable_outcomes(),
++                "position_outcome_resolved": False,
++            },
++        )
++        return outcome, event
++
++    def record_shadow_placeholder(
++        self,
++        *,
++        run_id: str,
++        cycle_id: str,
++        request: ScenarioRequest,
++        plan: TradePlan,
++        risk_decision: RiskDecision,
++        evidence: AutotuneEvidence,
++    ) -> tuple[ScenarioOutcome, Event]:
++        outcome = ScenarioOutcome(
++            scenario_id=request.scenario_id,
++            source_type=request.source_type,
++            result=OutcomeResult.PENDING,
++            gross_pnl_pct=0.0,
++            net_pnl_pct=0.0,
++            mfe_pct=0.0,
++            mae_pct=0.0,
++            duration_sec=0,
++            resolution_method=ResolutionMethod.PENDING,
++            quality=0.0,
++            planned_costs=self._planned_costs(plan),
++            actual_costs={},
++            payload={
++                **self._plan_payload(plan),
++                "evaluation_window_min": request.evaluation_window_min,
++                "parameter_variant": request.parameter_variant,
++                "tags": request.tags,
++            },
++            notes="Shadow request recorded; market-resolution engine has not resolved outcome yet.",
++        )
++        event = self._persist(
++            outcome=outcome,
++            run_id=run_id,
++            cycle_id=cycle_id,
++            source="OutcomeRecorder",
++            payload_extra={
++                "plan_id": plan.plan_id,
++                "risk_decision_id": risk_decision.risk_decision_id,
++                "shadow_source_id": request.source_id,
++                "autotune_evidence_id": evidence.evidence_id,
++                "traceable_outcome_sample_count": self.history_db.count_traceable_outcomes(),
++                "traceable": False,
++            },
++        )
++        return outcome, event
++
++    def record_testnet_close(
++        self,
++        *,
++        run_id: str,
++        cycle_id: str,
++        scenario_id: str,
++        plan: TradePlan,
++        entry_attempt: ExecutionAttempt,
++        close_attempt: ExecutionAttempt,
++        risk_decision: RiskDecision,
++        evidence: AutotuneEvidence,
++    ) -> tuple[ScenarioOutcome, Event]:
++        gross_pnl_pct = self._testnet_pnl_pct(plan, entry_attempt, close_attempt)
++        result = OutcomeResult.OBSERVED_FLAT
++        if gross_pnl_pct > 0:
++            result = OutcomeResult.OBSERVED_WIN
++        elif gross_pnl_pct < 0:
++            result = OutcomeResult.OBSERVED_LOSS
++        close_accepted = close_attempt.result.status == ExecutorResultStatus.ACCEPTED
++        outcome = ScenarioOutcome(
++            scenario_id=scenario_id,
++            source_type=ScenarioSource.REAL_EXECUTION,
++            result=result if close_accepted else OutcomeResult.UNRESOLVED,
++            gross_pnl_pct=gross_pnl_pct,
++            net_pnl_pct=gross_pnl_pct - float(self._planned_costs(plan).get("total_cost_pct", 0.0)),
++            mfe_pct=max(0.0, gross_pnl_pct),
++            mae_pct=min(0.0, gross_pnl_pct),
++            duration_sec=0,
++            resolution_method=ResolutionMethod.TESTNET_CLOSE if close_accepted else ResolutionMethod.AMBIGUOUS,
++            quality=1.0 if close_accepted else 0.0,
++            planned_costs=self._planned_costs(plan),
++            actual_costs={},
++            payload={
++                **self._plan_payload(plan),
++                "entry_result_id": entry_attempt.result.result_id,
++                "entry_exchange_order_id": entry_attempt.result.exchange_order_id,
++                "entry_avg_price": entry_attempt.result.avg_price,
++                "close_result_id": close_attempt.result.result_id,
++                "close_exchange_order_id": close_attempt.result.exchange_order_id,
++                "close_avg_price": close_attempt.result.avg_price,
++                "close_status": close_attempt.result.status,
++            },
++            notes="TESTNET reduce-only close outcome." if close_accepted else "TESTNET close attempt did not produce a resolved outcome.",
++        )
++        event = self._persist(
++            outcome=outcome,
++            run_id=run_id,
++            cycle_id=cycle_id,
++            source="OutcomeRecorder",
++            payload_extra={
++                "plan_id": plan.plan_id,
++                "risk_decision_id": risk_decision.risk_decision_id,
++                "entry_executor_result_id": entry_attempt.result.result_id,
++                "close_executor_result_id": close_attempt.result.result_id,
++                "autotune_evidence_id": evidence.evidence_id,
++                "position_outcome_resolved": close_accepted,
++            },
++        )
++        return outcome, event
++
++    def _persist(
++        self,
++        *,
++        outcome: ScenarioOutcome,
++        run_id: str,
++        cycle_id: str,
++        source: str,
++        payload_extra: Optional[dict[str, Any]] = None,
++    ) -> Event:
++        self.history_db.log_scenario_outcome(outcome)
++        payload = {
++            **asdict(outcome),
++            **(payload_extra or {}),
++            "traceable_outcome_sample_count": self.history_db.count_traceable_outcomes(),
++        }
++        return Event(
++            event_type=EventTypes.SCENARIO_OUTCOME_RECORDED,
++            run_id=run_id,
++            cycle_id=cycle_id,
++            source=source,
++            payload=payload,
++        )
++
++    @staticmethod
++    def _execution_result(attempt: ExecutionAttempt) -> str:
++        if attempt.result.status == ExecutorResultStatus.ACCEPTED:
++            return OutcomeResult.EXECUTOR_ACCEPTED
++        if attempt.result.status == ExecutorResultStatus.NOT_CALLED:
++            return OutcomeResult.EXECUTOR_NOT_CALLED
++        return OutcomeResult.EXECUTOR_REJECTED
++
++    @staticmethod
++    def _planned_costs(plan: TradePlan) -> dict[str, float]:
++        if plan.costs is None:
++            return {}
++        return {
++            "commission_pct": plan.costs.commission_pct,
++            "spread_pct": plan.costs.spread_pct,
++            "slippage_pct": plan.costs.slippage_pct,
++            "total_cost_pct": plan.costs.total_cost_pct,
++            "breakeven_move_pct": plan.costs.breakeven_move_pct,
++        }
++
++    @staticmethod
++    def _plan_payload(plan: TradePlan) -> dict[str, Any]:
++        return {
++            "plan_id": plan.plan_id,
++            "decision": plan.decision,
++            "symbol": plan.symbol,
++            "entry_price": plan.entry_price,
++            "stop_loss": plan.stop_loss,
++            "take_profit": plan.take_profit,
++            "rr_ratio": plan.rr_ratio,
++            "confidence": plan.confidence,
++            "net_expected_edge_pct": plan.net_expected_edge_pct,
++            "horizon_min": plan.dynamics_summary.get("horizon_min"),
++            "analyzer_probability": plan.dynamics_summary.get("analyzer_probability"),
++            "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
++            "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
++        }
++
++    @staticmethod
++    def _testnet_pnl_pct(plan: TradePlan, entry_attempt: ExecutionAttempt, close_attempt: ExecutionAttempt) -> float:
++        entry_price = entry_attempt.result.avg_price or plan.entry_price
++        close_price = close_attempt.result.avg_price
++        if entry_price is None or close_price is None or entry_price <= 0:
++            return 0.0
++        if plan.decision == "PREPARE_SHORT":
++            return (entry_price - close_price) / entry_price * 100
++        return (close_price - entry_price) / entry_price * 100
+diff --git a/nova/shadow/outcome_resolver.py b/nova/shadow/outcome_resolver.py
+new file mode 100644
+index 0000000..cb6740a
+--- /dev/null
++++ b/nova/shadow/outcome_resolver.py
+@@ -0,0 +1,202 @@
++"""Resolve pending scenario outcomes from closed candles.
++
++The resolver is intentionally conservative: it only creates a traceable outcome
++when the candle path is clear enough from OHLC data. Ambiguous SL/TP hits stay
++unresolved instead of becoming fake evidence.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Iterable, Optional
++
++from nova.data.models import Candle, MarketSnapshot
++from nova.shadow.outcome import OutcomeResult, ResolutionMethod, ScenarioOutcome
++
++
++@dataclass(frozen=True)
++class OutcomeResolution:
++    original_outcome_id: str
++    resolved: bool
++    outcome: Optional[ScenarioOutcome] = None
++    reason: str = ""
++
++
++class ScenarioOutcomeResolver:
++    def resolve_pending(self, pending: ScenarioOutcome, snapshot: MarketSnapshot | None) -> OutcomeResolution:
++        if snapshot is None:
++            return OutcomeResolution(pending.outcome_id, False, reason="missing_market_snapshot")
++        payload = pending.payload
++        symbol = str(payload.get("symbol") or snapshot.primary_symbol)
++        series = snapshot.candle_series(snapshot.base_timeframe, symbol)
++        if series is None or not series.candles:
++            return OutcomeResolution(pending.outcome_id, False, reason="missing_candle_series")
++
++        entry = self._float(payload.get("entry_price"))
++        stop = self._float(payload.get("stop_loss"))
++        target = self._float(payload.get("take_profit"))
++        if entry is None or stop is None or target is None or entry <= 0:
++            return OutcomeResolution(pending.outcome_id, False, reason="missing_plan_prices")
++
++        direction = self._direction(entry, stop, target)
++        if direction is None:
++            return OutcomeResolution(pending.outcome_id, False, reason="unsupported_plan_direction")
++
++        window = max(1, int(payload.get("evaluation_window_min") or payload.get("horizon_min") or 1))
++        candles = [candle for candle in series.candles if candle.is_closed][-window:]
++        if not candles:
++            return OutcomeResolution(pending.outcome_id, False, reason="no_closed_candles")
++
++        return self._resolve_path(
++            pending=pending,
++            candles=candles,
++            entry=entry,
++            stop=stop,
++            target=target,
++            direction=direction,
++        )
++
++    def _resolve_path(
++        self,
++        *,
++        pending: ScenarioOutcome,
++        candles: Iterable[Candle],
++        entry: float,
++        stop: float,
++        target: float,
++        direction: str,
++    ) -> OutcomeResolution:
++        candle_list = list(candles)
++        mfe_pct = 0.0
++        mae_pct = 0.0
++        ambiguous = False
++        for idx, candle in enumerate(candle_list, start=1):
++            if direction == "LONG":
++                mfe_pct = max(mfe_pct, (candle.high - entry) / entry * 100)
++                mae_pct = min(mae_pct, (candle.low - entry) / entry * 100)
++                hit_target = candle.high >= target
++                hit_stop = candle.low <= stop
++            else:
++                mfe_pct = max(mfe_pct, (entry - candle.low) / entry * 100)
++                mae_pct = min(mae_pct, (entry - candle.high) / entry * 100)
++                hit_target = candle.low <= target
++                hit_stop = candle.high >= stop
++
++            if hit_target and hit_stop:
++                ambiguous = True
++                break
++            if hit_target:
++                return self._resolved(pending, OutcomeResult.OBSERVED_WIN, target, entry, mfe_pct, mae_pct, idx)
++            if hit_stop:
++                return self._resolved(pending, OutcomeResult.OBSERVED_LOSS, stop, entry, mfe_pct, mae_pct, idx)
++
++        if ambiguous:
++            unresolved = self._copy_with(
++                pending,
++                result=OutcomeResult.UNRESOLVED,
++                resolution_method=ResolutionMethod.AMBIGUOUS,
++                quality=0.0,
++                notes="Both stop and target were touched inside one candle; OHLC path is ambiguous.",
++            )
++            return OutcomeResolution(pending.outcome_id, True, outcome=unresolved, reason="ambiguous_ohlc_path")
++
++        last_close = candle_list[-1].close
++        pnl_pct = self._pnl_pct(entry, last_close, direction)
++        result = OutcomeResult.OBSERVED_FLAT
++        if pnl_pct > 0:
++            result = OutcomeResult.OBSERVED_WIN
++        elif pnl_pct < 0:
++            result = OutcomeResult.OBSERVED_LOSS
++        return OutcomeResolution(
++            pending.outcome_id,
++            True,
++            outcome=ScenarioOutcome(
++                scenario_id=pending.scenario_id,
++                source_type=pending.source_type,
++                result=result,
++                gross_pnl_pct=pnl_pct,
++                net_pnl_pct=pnl_pct - float(pending.planned_costs.get("total_cost_pct", 0.0)),
++                mfe_pct=mfe_pct,
++                mae_pct=mae_pct,
++                duration_sec=len(candle_list) * 60,
++                resolution_method=ResolutionMethod.OHLC_CLEAR,
++                quality=0.7,
++                planned_costs=pending.planned_costs,
++                actual_costs={},
++                payload={**pending.payload, "resolved_from_outcome_id": pending.outcome_id, "exit_price": last_close},
++                notes="Evaluation window ended without SL/TP hit; resolved by final close.",
++            ),
++            reason="window_close_resolution",
++        )
++
++    def _resolved(
++        self,
++        pending: ScenarioOutcome,
++        result: str,
++        exit_price: float,
++        entry: float,
++        mfe_pct: float,
++        mae_pct: float,
++        candle_count: int,
++    ) -> OutcomeResolution:
++        direction = self._direction(entry, self._float(pending.payload.get("stop_loss")), self._float(pending.payload.get("take_profit"))) or "LONG"
++        gross_pnl = self._pnl_pct(entry, exit_price, direction)
++        outcome = ScenarioOutcome(
++            scenario_id=pending.scenario_id,
++            source_type=pending.source_type,
++            result=result,
++            gross_pnl_pct=gross_pnl,
++            net_pnl_pct=gross_pnl - float(pending.planned_costs.get("total_cost_pct", 0.0)),
++            mfe_pct=mfe_pct,
++            mae_pct=mae_pct,
++            duration_sec=candle_count * 60,
++            resolution_method=ResolutionMethod.OHLC_CLEAR,
++            quality=1.0,
++            planned_costs=pending.planned_costs,
++            actual_costs={},
++            payload={**pending.payload, "resolved_from_outcome_id": pending.outcome_id, "exit_price": exit_price},
++            notes="Resolved by clear OHLC stop/target hit.",
++        )
++        return OutcomeResolution(pending.outcome_id, True, outcome=outcome, reason="clear_ohlc_hit")
++
++    @staticmethod
++    def _copy_with(pending: ScenarioOutcome, *, result: str, resolution_method: str, quality: float, notes: str) -> ScenarioOutcome:
++        return ScenarioOutcome(
++            scenario_id=pending.scenario_id,
++            source_type=pending.source_type,
++            result=result,
++            gross_pnl_pct=0.0,
++            net_pnl_pct=0.0,
++            mfe_pct=pending.mfe_pct,
++            mae_pct=pending.mae_pct,
++            duration_sec=pending.duration_sec,
++            resolution_method=resolution_method,
++            quality=quality,
++            planned_costs=pending.planned_costs,
++            actual_costs=pending.actual_costs,
++            payload={**pending.payload, "resolved_from_outcome_id": pending.outcome_id},
++            notes=notes,
++        )
++
++    @staticmethod
++    def _direction(entry: float, stop: float | None, target: float | None) -> Optional[str]:
++        if stop is None or target is None:
++            return None
++        if stop < entry < target:
++            return "LONG"
++        if target < entry < stop:
++            return "SHORT"
++        return None
++
++    @staticmethod
++    def _pnl_pct(entry: float, exit_price: float, direction: str) -> float:
++        if direction == "LONG":
++            return (exit_price - entry) / entry * 100
++        return (entry - exit_price) / entry * 100
++
++    @staticmethod
++    def _float(value: object) -> Optional[float]:
++        try:
++            return float(value)
++        except (TypeError, ValueError):
++            return None

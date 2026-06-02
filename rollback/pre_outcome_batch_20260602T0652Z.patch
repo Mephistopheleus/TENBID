@@ -1,0 +1,119 @@
+diff --git a/config/active_profile.json b/config/active_profile.json
+index e19a593..f0e0345 100644
+--- a/config/active_profile.json
++++ b/config/active_profile.json
+@@ -16,6 +16,7 @@
+   "market_structure_analyzer_trust_points": 0.10,
+   "minimum_shadow_samples_before_execution": 50,
+   "shadow_outcome_sample_count": 0,
++  "execution_blocking_enabled": false,
+   "orderbook_min_interval_sec": 30,
+   "native_tf_reconcile_interval_sec": 900,
+   "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION"
+diff --git a/docs/AUTOTUNER_MODEL.md b/docs/AUTOTUNER_MODEL.md
+index aa1bdd0..68c067d 100644
+--- a/docs/AUTOTUNER_MODEL.md
++++ b/docs/AUTOTUNER_MODEL.md
+@@ -67,6 +67,25 @@ Autotuner changes active profile parameters, not secrets, keys, mode or safety l
+ 
+ SafetyKernel boundaries are not autotuned. Shadow and Laboratory may produce evidence that a boundary was too strict or too loose, but changing the boundary is an explicit owner/policy action.
+ 
++## Confidence and trust flow
++
++Autotuner must treat analyzer probability and autotuner trust as separate inputs.
++
++- Analyzer probability is the analyzer's own mathematical forecast of its observation.
++- Autotuner trust points are earned from traceable shadow, laboratory and real outcome evidence.
++- Data quality only gates whether analysis may run; it does not create trade confidence.
++
++Canonical flow:
++
++```text
++effective_confidence = average(analyzer_probability, autotuner_trust_points)
++deal_confidence = average(all effective_confidence values)
++```
++
++Do not sum or multiply these values into a fake certainty number.
++
++Until the minimum shadow / traceable outcome sample count is reached, normal executor approval stays forbidden.
++
+ ## Parameter registry
+ 
+ New modules can add new tunable parameters if they register `ParameterSpec`:
+diff --git a/docs/NOVA_CANON.md b/docs/NOVA_CANON.md
+index 8336ab2..7cc2435 100644
+--- a/docs/NOVA_CANON.md
++++ b/docs/NOVA_CANON.md
+@@ -84,6 +84,23 @@ Autotuner tunes parameters inside the Canon. It must not rewrite the Canon.
+ 
+ Autotuner may adapt thresholds, decay, confidence handling, parameter profiles and conditional behavior when lineage and evidence support that change. It must not change owner-controlled boundaries, secrets, mode selection or the system's meaning model.
+ 
++## Confidence and trust rule
++
++Analyzer probability is the analyzer's own mathematical forecast of its observation. It is not data quality and not trade permission.
++
++Autotuner trust points are separate from analyzer probability. They start at the minimum seed value and change only from traceable shadow, laboratory or real outcome evidence.
++
++Data quality is only a gate for whether analysis may run. It must not be converted into trade confidence.
++
++The canonical confidence flow is:
++
++- per analyzer: `effective_confidence = average(analyzer_probability, autotuner_trust_points)`;
++- for the deal: `deal_confidence = average(all effective_confidence values)`.
++
++These values must not be summed or multiplied into a fake certainty number.
++
++Until the minimum shadow / traceable outcome sample count is reached, normal executor approval is forbidden. Only explicit shadow, laboratory or owner-approved TESTNET probe paths may proceed.
++
+ ## Safety and risk rule
+ 
+ `SafetyKernel` stores non-negotiable owner boundaries.
+@@ -131,4 +148,3 @@ Use these phrases as hard review checks:
+ - this follows the NOVA Canon;
+ - this analyzer must be adapted through the NOVA Canon;
+ - this donor logic violates the NOVA Canon.
+-
+diff --git a/nova/risk/risk_manager.py b/nova/risk/risk_manager.py
+index 20dfb87..b2b577c 100644
+--- a/nova/risk/risk_manager.py
++++ b/nova/risk/risk_manager.py
+@@ -53,14 +53,21 @@ class RiskManager:
+         if plan.rr_ratio is not None and plan.rr_ratio < target_rr_min:
+             warnings.append("rr_below_profile_reference")
+ 
++        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
+         confidence_threshold = float(profile_values.get("confidence_threshold", 0.7))
+         if plan.confidence < confidence_threshold:
+-            hard_blocks.append("effective_confidence_below_profile_threshold")
++            if execution_blocking_enabled:
++                hard_blocks.append("effective_confidence_below_profile_threshold")
++            else:
++                warnings.append("effective_confidence_below_profile_threshold")
+ 
+         minimum_shadow_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
+         shadow_sample_count = int(profile_values.get("shadow_outcome_sample_count", 0))
+         if shadow_sample_count < minimum_shadow_samples:
+-            hard_blocks.append("minimum_shadow_samples_not_reached")
++            if execution_blocking_enabled:
++                hard_blocks.append("minimum_shadow_samples_not_reached")
++            else:
++                warnings.append("minimum_shadow_samples_not_reached")
+ 
+         if state_matrix is None:
+             warnings.append("missing_state_matrix_object")
+@@ -111,6 +118,7 @@ class RiskManager:
+         profile_values: Dict[str, Any],
+         active_positions_count: int,
+     ) -> Dict[str, object]:
++        execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
+         return {
+             "not_executor": True,
+             "testnet_feedback_mode": True,
+@@ -127,6 +135,7 @@ class RiskManager:
+             "active_positions_count": active_positions_count,
+             "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
+             "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
++            "execution_blocking_enabled": execution_blocking_enabled,
+             "profile_refs": {
+                 "min_net_edge_pct": profile_values.get("min_net_edge_pct"),
+                 "target_rr_min": profile_values.get("target_rr_min"),
