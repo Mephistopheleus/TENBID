@@ -36,6 +36,7 @@ from nova.data.models import MarketSnapshot
 from nova.decision.trade_calculator import TradeCalculator, TradeCalculatorConfig
 from nova.decision.trade_plan import TradePlan
 from nova.execution.exchange_executor import ExchangeExecutor
+from nova.execution.order_tracker import OrderTracker
 from nova.execution.position_manager import PositionManager
 from nova.labs.experiment_dispatcher import ExperimentDispatcher
 from nova.matrix.forecast_matrix import ForecastMatrixEngine
@@ -503,6 +504,18 @@ class CycleRunner:
         close_attempt = None
         position_management = None
         if executor_accepted:
+            order_reconciliation = OrderTracker(executor.connector()).reconcile_attempt(attempt)
+            self._record(
+                Event(
+                    event_type=EventTypes.ORDER_STATUS_RECONCILED
+                    if order_reconciliation.status == "RECONCILED"
+                    else EventTypes.ORDER_STATUS_RECONCILIATION_FAILED,
+                    run_id=self.run_id,
+                    cycle_id=cycle_id,
+                    source="OrderTracker",
+                    payload=asdict(order_reconciliation),
+                )
+            )
             position_manager = position_manager or PositionManager(self.config, history_db=self.history_db)
             position_management = position_manager.manage_after_entry(
                 plan=plan,

@@ -122,6 +122,22 @@ class BinanceFuturesConnector:
             params["reduceOnly"] = "true"
         return self._request("POST", "/fapi/v1/order", params=params, signed=True)
 
+    def get_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str | int | None = None,
+        orig_client_order_id: str | None = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"symbol": symbol.upper()}
+        if order_id is not None:
+            params["orderId"] = order_id
+        if orig_client_order_id:
+            params["origClientOrderId"] = orig_client_order_id
+        if "orderId" not in params and "origClientOrderId" not in params:
+            raise ValueError("get_order requires order_id or orig_client_order_id")
+        return self._request("GET", "/fapi/v1/order", params=params, signed=True)
+
     def place_reduce_only_market_order(self, *, symbol: str, side: str, quantity: float | str) -> Dict[str, Any]:
         return self.place_order(
             {
