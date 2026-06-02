@@ -33,7 +33,7 @@ class EvidenceCollector:
             observations=observations,
         )
 
-    def collect_real_testnet(
+    def collect_real_exchange(
         self,
         *,
         profile_id: str,
@@ -45,7 +45,7 @@ class EvidenceCollector:
         executor_result_id: Optional[str] = None,
     ) -> AutotuneEvidence:
         return self.collect_feedback(
-            source_type=AutotuneEvidenceSource.REAL_TESTNET,
+            source_type=AutotuneEvidenceSource.REAL_EXCHANGE,
             source_weight=1.0,
             profile_id=profile_id,
             plan_id=plan_id,
@@ -55,3 +55,6 @@ class EvidenceCollector:
             parameter_snapshot=parameter_snapshot,
             observations={"minimum_sample_before_tuning": 50, **observations},
         )
+
+    def collect_real_testnet(self, **kwargs: object) -> AutotuneEvidence:
+        return self.collect_real_exchange(**kwargs)

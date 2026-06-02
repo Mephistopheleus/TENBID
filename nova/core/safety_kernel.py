@@ -30,7 +30,7 @@ class SafetyPolicy:
     """
 
     allowed_symbol: str = "DOGEUSDT"
-    allowed_mode: str = "TESTNET"
+    allowed_connection: str = "BINANCE_TESTNET"
     live_requires_unlock: bool = True
     require_invalidation_boundary: bool = True
 
@@ -42,8 +42,14 @@ class SafetyKernel:
     def assert_mode_allowed(self, mode: str, live_unlock: bool = False) -> None:
         if mode == "LIVE" and (self.policy.live_requires_unlock and not live_unlock):
             raise PermissionError("LIVE mode is locked")
-        if mode != self.policy.allowed_mode and mode != "LIVE":
+        if mode not in {"TESTNET", "LIVE"}:
             raise PermissionError(f"Mode not allowed: {mode}")
+
+    def assert_connection_allowed(self, execution_connection: str, live_unlock: bool = False) -> None:
+        if execution_connection == "BINANCE_LIVE" and (self.policy.live_requires_unlock and not live_unlock):
+            raise PermissionError("BINANCE_LIVE connection is locked")
+        if execution_connection != self.policy.allowed_connection and execution_connection != "BINANCE_LIVE":
+            raise PermissionError(f"Execution connection not allowed: {execution_connection}")
 
     def assert_symbol_allowed(self, symbol: str) -> None:
         if symbol != self.policy.allowed_symbol:

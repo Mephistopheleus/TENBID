@@ -26,6 +26,7 @@ class ExecutorRequest:
     quantity: str
     notional_usdt: float
     reference_price: float
+    execution_connection: str = "BINANCE_TESTNET"
     testnet_only: bool = True
     reduce_only: bool = False
     payload: Dict[str, object] = field(default_factory=dict)
@@ -50,4 +51,3 @@ class ExecutorResult:
 class ExecutionAttempt:
     request: Optional[ExecutorRequest]
     result: ExecutorResult
-

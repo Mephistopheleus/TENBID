@@ -9,6 +9,7 @@ from nova.core.ids import RECOMMENDATION, new_id
 
 
 class AutotuneEvidenceSource:
+    REAL_EXCHANGE = "REAL_EXCHANGE"
     REAL_TESTNET = "REAL_TESTNET"
     SHADOW = "SHADOW"
     LAB = "LAB"

@@ -28,7 +28,7 @@ class Reporter:
     ) -> dict[str, Any]:
         return {
             "report_id": new_id("REPORT"),
-            "report_type": "TESTNET_EXECUTION_REPORT",
+            "report_type": "EXCHANGE_EXECUTION_REPORT",
             "fake_outcome": False,
             "outcome_status": "execution_report_only_position_outcome_not_recorded",
             "plan": {

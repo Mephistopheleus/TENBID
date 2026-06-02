@@ -115,7 +115,7 @@ class OutcomeRecorder:
         )
         return outcome, event
 
-    def record_testnet_close(
+    def record_exchange_close(
         self,
         *,
         run_id: str,
@@ -127,7 +127,7 @@ class OutcomeRecorder:
         risk_decision: RiskDecision,
         evidence: AutotuneEvidence,
     ) -> tuple[ScenarioOutcome, Event]:
-        gross_pnl_pct = self._testnet_pnl_pct(plan, entry_attempt, close_attempt)
+        gross_pnl_pct = self._exchange_pnl_pct(plan, entry_attempt, close_attempt)
         result = OutcomeResult.OBSERVED_FLAT
         if gross_pnl_pct > 0:
             result = OutcomeResult.OBSERVED_WIN
@@ -143,7 +143,7 @@ class OutcomeRecorder:
             mfe_pct=max(0.0, gross_pnl_pct),
             mae_pct=min(0.0, gross_pnl_pct),
             duration_sec=0,
-            resolution_method=ResolutionMethod.TESTNET_CLOSE if close_accepted else ResolutionMethod.AMBIGUOUS,
+            resolution_method=ResolutionMethod.EXCHANGE_CLOSE if close_accepted else ResolutionMethod.AMBIGUOUS,
             quality=1.0 if close_accepted else 0.0,
             planned_costs=self._planned_costs(plan),
             actual_costs={},
@@ -157,7 +157,7 @@ class OutcomeRecorder:
                 "close_avg_price": close_attempt.result.avg_price,
                 "close_status": close_attempt.result.status,
             },
-            notes="TESTNET reduce-only close outcome." if close_accepted else "TESTNET close attempt did not produce a resolved outcome.",
+            notes="Exchange reduce-only close outcome." if close_accepted else "Exchange close attempt did not produce a resolved outcome.",
         )
         event = self._persist(
             outcome=outcome,
@@ -175,6 +175,9 @@ class OutcomeRecorder:
         )
         return outcome, event
 
+    def record_testnet_close(self, **kwargs: Any) -> tuple[ScenarioOutcome, Event]:
+        return self.record_exchange_close(**kwargs)
+
     def record_position_manager_close(
         self,
         *,
@@ -189,7 +192,7 @@ class OutcomeRecorder:
         close_reason: str,
         position_payload: dict[str, Any],
     ) -> tuple[ScenarioOutcome, Event]:
-        gross_pnl_pct = self._testnet_pnl_pct(plan, entry_attempt, close_attempt)
+        gross_pnl_pct = self._exchange_pnl_pct(plan, entry_attempt, close_attempt)
         result = OutcomeResult.OBSERVED_FLAT
         if gross_pnl_pct > 0:
             result = OutcomeResult.OBSERVED_WIN
@@ -304,7 +307,7 @@ class OutcomeRecorder:
         }
 
     @staticmethod
-    def _testnet_pnl_pct(plan: TradePlan, entry_attempt: ExecutionAttempt, close_attempt: ExecutionAttempt) -> float:
+    def _exchange_pnl_pct(plan: TradePlan, entry_attempt: ExecutionAttempt, close_attempt: ExecutionAttempt) -> float:
         entry_price = entry_attempt.result.avg_price or plan.entry_price
         close_price = close_attempt.result.avg_price
         if entry_price is None or close_price is None or entry_price <= 0:

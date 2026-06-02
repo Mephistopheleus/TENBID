@@ -829,6 +829,7 @@ class HistoryDB:
         if outcome.quality <= 0:
             return False
         traceable_methods = {
+            ResolutionMethod.EXCHANGE_CLOSE,
             ResolutionMethod.TESTNET_CLOSE,
             ResolutionMethod.POSITION_MANAGER_CLOSE,
             ResolutionMethod.OHLC_CLEAR,

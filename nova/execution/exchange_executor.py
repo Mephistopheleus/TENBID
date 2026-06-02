@@ -1,4 +1,4 @@
-"""Exchange executor for TESTNET order attempts.
+"""Exchange executor for Binance Futures order attempts.
 
 Executor is the physical edge. It does not decide, tune or manage risk.
 """
@@ -60,7 +60,8 @@ class ExchangeExecutor:
                 quantity=str(order["quantity"]),
                 notional_usdt=float(order["notional_usdt"]),
                 reference_price=float(order["mark_price"]),
-                testnet_only=self.config.trading_mode == "TESTNET",
+                execution_connection=self.config.execution_connection,
+                testnet_only=self.config.execution_connection == "BINANCE_TESTNET",
                 reduce_only=False,
                 payload={
                     "filters": order.get("filters", {}),
@@ -107,15 +108,6 @@ class ExchangeExecutor:
         entry_attempt: ExecutionAttempt,
         risk_decision: RiskDecision,
     ) -> ExecutionAttempt:
-        if self.config.trading_mode != "TESTNET":
-            result = ExecutorResult(
-                request_id=None,
-                plan_id=trade_plan.plan_id,
-                status=ExecutorResultStatus.NOT_CALLED,
-                reason="reduce_only_close_allowed_only_in_testnet",
-                raw_response={"trading_mode": self.config.trading_mode},
-            )
-            return ExecutionAttempt(request=None, result=result)
         if entry_attempt.result.status != ExecutorResultStatus.ACCEPTED:
             result = ExecutorResult(
                 request_id=None,
@@ -147,12 +139,13 @@ class ExchangeExecutor:
             quantity=str(quantity),
             notional_usdt=float(quantity) * float(reference_price or 0.0),
             reference_price=float(reference_price or 0.0),
-            testnet_only=True,
+            execution_connection=self.config.execution_connection,
+            testnet_only=self.config.execution_connection == "BINANCE_TESTNET",
             reduce_only=True,
             payload={
                 "entry_result_id": entry_attempt.result.result_id,
                 "entry_exchange_order_id": entry_attempt.result.exchange_order_id,
-                "purpose": "testnet_position_close",
+                "purpose": "exchange_position_close",
             },
         )
         order = {
@@ -199,9 +192,9 @@ class ExchangeExecutor:
         return self.connector()
 
     def connector(self) -> BinanceFuturesConnector:
-        section = "BINANCE_TESTNET" if self.config.trading_mode == "TESTNET" else "BINANCE_LIVE"
+        section = self.config.execution_connection
         base_url = self.config.secrets.get(section, "base_url", fallback=self.config.public_rest_base_url)
-        if self.config.trading_mode == "TESTNET" and "binance.vision" in base_url:
+        if section == "BINANCE_TESTNET" and "binance.vision" in base_url:
             base_url = self.config.public_rest_base_url
         api_key = self.config.secrets.get(section, "api_key", fallback="")
         secret_key = self.config.secrets.get(section, "secret_key", fallback="")
@@ -235,7 +228,8 @@ class ExchangeExecutor:
             quantity=str(quantity),
             notional_usdt=float(quantity) * float(reference_price or 0.0),
             reference_price=float(reference_price or 0.0),
-            testnet_only=self.config.trading_mode == "TESTNET",
+            execution_connection=self.config.execution_connection,
+            testnet_only=self.config.execution_connection == "BINANCE_TESTNET",
             reduce_only=True,
             payload={"purpose": "position_manager_close", "reason": reason},
         )

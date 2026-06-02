@@ -611,7 +611,7 @@ class CycleRunner:
         plan_scenario_id = plan.dynamics_summary.get("scenario_id")
         evidence_scenario_id = str(plan_scenario_id) if executor_accepted and plan_scenario_id else shadow_request.scenario_id
         evidence = EvidenceCollector().collect_feedback(
-            source_type=AutotuneEvidenceSource.REAL_TESTNET if executor_accepted else AutotuneEvidenceSource.SHADOW,
+            source_type=AutotuneEvidenceSource.REAL_EXCHANGE if executor_accepted else AutotuneEvidenceSource.SHADOW,
             source_weight=1.0 if executor_accepted else 0.0,
             profile_id=self.config.profile.profile_id,
             parameter_snapshot=profile_values,
@@ -677,7 +677,7 @@ class CycleRunner:
                         position_payload=position_management.payload,
                     )
                 else:
-                    _, close_outcome_event = outcome_recorder.record_testnet_close(
+                    _, close_outcome_event = outcome_recorder.record_exchange_close(
                         run_id=self.run_id,
                         cycle_id=cycle_id,
                         scenario_id=evidence_scenario_id,

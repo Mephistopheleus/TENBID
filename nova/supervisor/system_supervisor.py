@@ -58,6 +58,7 @@ class SystemSupervisor:
                 source="SystemSupervisor",
                 payload={
                     "trading_mode": config.trading_mode,
+                    "execution_connection": config.execution_connection,
                     "symbol": config.symbol,
                     "base_timeframe": config.base_timeframe,
                     "profile_id": config.profile.profile_id,
@@ -548,6 +549,7 @@ class SystemSupervisor:
     def _validate_safety(config: RuntimeConfig) -> None:
         kernel = SafetyKernel()
         kernel.assert_mode_allowed(config.trading_mode, live_unlock=config.live_unlock)
+        kernel.assert_connection_allowed(config.execution_connection, live_unlock=config.live_unlock)
         kernel.assert_symbol_allowed(config.symbol)
 
     @staticmethod

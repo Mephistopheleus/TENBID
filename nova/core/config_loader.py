@@ -19,6 +19,7 @@ from nova.core.profiles import ParameterProfile
 class RuntimeConfig:
     root_dir: Path
     trading_mode: str
+    execution_connection: str
     live_unlock: bool
     symbol: str
     initial_balance_usdt: float
@@ -60,13 +61,17 @@ class ConfigLoader:
         base = self._read_ini("config/base.ini")
         profile = self._read_profile("config/active_profile.json")
 
-        trading_mode = secrets.get("MODE", "trading_mode", fallback="TESTNET").upper()
+        legacy_mode = secrets.get("MODE", "trading_mode", fallback="TESTNET").upper()
+        execution_connection = secrets.get("MODE", "execution_connection", fallback="").upper()
+        if not execution_connection:
+            execution_connection = "BINANCE_LIVE" if legacy_mode == "LIVE" else "BINANCE_TESTNET"
         live_unlock = secrets.getboolean("MODE", "live_unlock", fallback=False)
         symbol = base.get("GENERAL", "symbol", fallback=profile.symbol)
 
         return RuntimeConfig(
             root_dir=self.root_dir,
-            trading_mode=trading_mode,
+            trading_mode=legacy_mode,
+            execution_connection=execution_connection,
             live_unlock=live_unlock,
             symbol=symbol,
             initial_balance_usdt=base.getfloat("GENERAL", "initial_balance_usdt"),
