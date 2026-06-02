@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from nova.data.models import Candle, MarketSnapshot
+from nova.shadow.intrabar_resolver import IntrabarResolver
 from nova.shadow.outcome import OutcomeResult, ResolutionMethod, ScenarioOutcome
 
 
@@ -83,6 +84,28 @@ class ScenarioOutcomeResolver:
                 hit_stop = candle.high >= stop
 
             if hit_target and hit_stop:
+                lower_timeframe = pending.payload.get("intrabar_timeframe", "1m")
+                lower_candles = pending.payload.get("intrabar_candles")
+                if isinstance(lower_candles, list):
+                    intrabar = IntrabarResolver().resolve_with_candles(
+                        candles=[candle for candle in lower_candles if isinstance(candle, Candle)],
+                        entry=entry,
+                        stop=stop,
+                        target=target,
+                        direction=direction,
+                    )
+                    if intrabar.resolved and intrabar.result is not None and intrabar.exit_price is not None:
+                        return self._resolved(
+                            pending,
+                            intrabar.result,
+                            intrabar.exit_price,
+                            entry,
+                            intrabar.mfe_pct,
+                            intrabar.mae_pct,
+                            intrabar.candle_count,
+                            resolution_method=intrabar.resolution_method or ResolutionMethod.ONE_MINUTE_REPLAY,
+                            notes=f"Resolved by {lower_timeframe} intrabar replay: {intrabar.reason}",
+                        )
                 ambiguous = True
                 break
             if hit_target:
@@ -138,6 +161,8 @@ class ScenarioOutcomeResolver:
         mfe_pct: float,
         mae_pct: float,
         candle_count: int,
+        resolution_method: str = ResolutionMethod.OHLC_CLEAR,
+        notes: str = "Resolved by clear OHLC stop/target hit.",
     ) -> OutcomeResolution:
         direction = self._direction(entry, self._float(pending.payload.get("stop_loss")), self._float(pending.payload.get("take_profit"))) or "LONG"
         gross_pnl = self._pnl_pct(entry, exit_price, direction)
@@ -150,12 +175,12 @@ class ScenarioOutcomeResolver:
             mfe_pct=mfe_pct,
             mae_pct=mae_pct,
             duration_sec=candle_count * 60,
-            resolution_method=ResolutionMethod.OHLC_CLEAR,
+            resolution_method=resolution_method,
             quality=1.0,
             planned_costs=pending.planned_costs,
             actual_costs={},
             payload={**pending.payload, "resolved_from_outcome_id": pending.outcome_id, "exit_price": exit_price},
-            notes="Resolved by clear OHLC stop/target hit.",
+            notes=notes,
         )
         return OutcomeResolution(pending.outcome_id, True, outcome=outcome, reason="clear_ohlc_hit")
 
