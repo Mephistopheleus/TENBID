@@ -1,4 +1,4 @@
-"""TESTNET/LIVE-like position lifecycle manager.
+"""Exchange position lifecycle manager.
 
 This module does not create scenarios and does not bypass RiskManager. It only
 tracks the physical exchange position after an accepted entry and closes it by

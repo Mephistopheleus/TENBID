@@ -33,5 +33,5 @@ class MarketEpisode:
     end_time: str
     related_plan_id: Optional[str] = None
     event_ids: List[str] = field(default_factory=list)
+    payload: Dict[str, object] = field(default_factory=dict)
     episode_id: str = field(default_factory=lambda: new_id("EPISODE"))
-

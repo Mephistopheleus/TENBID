@@ -1,8 +1,8 @@
 """Risk manager for calculated TradePlans.
 
-In TESTNET this layer is not a fear brake. It keeps hard-invalid plans away
-from the executor and marks weak-but-useful plans as warning-rich evidence for
-Shadow, Laboratory and Autotuner.
+This layer is not a fear brake. It keeps hard-invalid plans away from the
+executor and marks weak-but-useful plans as warning-rich evidence for Shadow,
+Laboratory and Autotuner.
 """
 
 from __future__ import annotations

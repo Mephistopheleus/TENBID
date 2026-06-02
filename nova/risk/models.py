@@ -1,4 +1,4 @@
-"""Risk decision contracts for the TESTNET execution path."""
+"""Risk decision contracts for the exchange execution path."""
 
 from __future__ import annotations
 

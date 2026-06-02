@@ -69,7 +69,7 @@ class OutcomeRecorder:
         )
         return outcome, event
 
-    def record_shadow_placeholder(
+    def record_shadow_pending(
         self,
         *,
         run_id: str,

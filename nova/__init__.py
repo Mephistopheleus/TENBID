@@ -1,4 +1,3 @@
-"""NOVA clean-room trading system skeleton."""
+"""NOVA clean-room trading runtime."""
 
-__version__ = "0.0.0-skeleton"
-
+__version__ = "0.1.0"

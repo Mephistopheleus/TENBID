@@ -1,8 +1,8 @@
 """Canonical TradePlan contract.
 
-TradePlan is the later calculator/risk-manager output envelope. Data, analyzers
-and matrix must not fill it directly. Current runtime uses HOLD only as a safe
-placeholder while the calculation layer is not connected.
+TradePlan is the calculator/risk-manager output envelope. Data, analyzers and
+matrix must not fill it directly; they provide traceable context that the
+scenario and calculation layers turn into a runtime plan.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from nova.core.ids import PLAN, new_id
 
 
 class PlanRole:
-    RUNTIME_PLACEHOLDER = "RUNTIME_PLACEHOLDER"
+    RUNTIME_HOLD = "RUNTIME_HOLD"
     CALCULATED = "CALCULATED"
     SHADOW_FORBIDDEN = "SHADOW_FORBIDDEN"
     SHADOW_ALTERNATIVE = "SHADOW_ALTERNATIVE"
@@ -42,7 +42,7 @@ class TradePlan:
     symbol: str
     reason: str
     profile_id: str
-    plan_role: str = PlanRole.RUNTIME_PLACEHOLDER
+    plan_role: str = PlanRole.RUNTIME_HOLD
     source_type: str = "RUNTIME"
     parent_plan_id: Optional[str] = None
     blocked_by: Optional[str] = None

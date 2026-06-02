@@ -1,8 +1,9 @@
 """Cycle runner.
 
 CycleRunner stitches data snapshot, state snapshot, analyzers and matrix into a
-traceable context package. It is not the market-action calculator; until that
-separate layer exists, the runtime finishes with a safe placeholder TradePlan.
+traceable context package, builds a scenario-backed TradePlan, evaluates risk,
+routes approved plans through the configured exchange connection, and records
+runtime/shadow feedback for Autotuner evidence.
 """
 
 from __future__ import annotations
@@ -701,7 +702,7 @@ class CycleRunner:
                         evidence=evidence,
                     )
         else:
-            _, outcome_event = outcome_recorder.record_shadow_placeholder(
+            _, outcome_event = outcome_recorder.record_shadow_pending(
                 run_id=self.run_id,
                 cycle_id=cycle_id,
                 request=shadow_request,

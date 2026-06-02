@@ -1,8 +1,9 @@
 """System supervisor.
 
 Owns liveness: config load, event log, data warmup, cycle runner, reconnects
-and graceful shutdown. The current runtime validates TESTNET mode, builds the
-first MarketSnapshot from REST warmup and runs one safe HOLD cycle.
+and graceful shutdown. The runtime validates safety boundaries, builds the
+MarketSnapshot from REST warmup/refresh data and runs the configured exchange
+connection through the same lifecycle used for live execution.
 """
 
 from __future__ import annotations
