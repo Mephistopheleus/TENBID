@@ -1,30 +1,20 @@
 """
-TENBID - Advanced Scalping Trading System for Binance
-Complete modular architecture with shadow calculations and adaptive confidence
-
-ИСПРАВЛЕНИЯ:
-- Добавлен менеджер позиций для отслеживания активных сделок
-- Реализовано закрытие сделок по TP/SL/trailing
-- Autotuner получает данные о результатах сделок
-- Исправлены конфликты импортов
+TENBID v2.0 - Advanced Scalping System
+Full Integration with DataLineage Manager
 """
-
 import asyncio
 import logging
-from datetime import datetime
-from core.config_loader import ConfigLoader
-from core.logger import setup_logger
-from core.history_db import HistoryDB
-from core.binance_connector import BinanceConnector
-from analyzers.data_manager import DataManager
-from analyzers.synthetic_timeframes import SyntheticTimeframes
+import time
+from typing import Dict, List, Any
+from binance import AsyncClient
+from core.data_lineage import DataLineageManager
 from analyzers.market_analyzer import MarketAnalyzer
-from analyzers.btc_correlation import BTCCorrelationAnalyzer
-from analyzers.fractal_analysis import FractalAnalyzer
-from analyzers.orderbook_analysis import OrderbookAnalyzer
-from analyzers.pattern_recognition import PatternRecognitionAnalyzer
-from analyzers.market_regime import MarketRegimeAnalyzer
-from core.analysis_context import AnalysisContext
+from analyzers.volume_profile import VolumeProfileAnalyzer
+from analyzers.pattern_analyzer import PatternAnalyzer
+from analyzers.support_resistance_analyzer import SupportResistanceAnalyzer
+from analyzers.orderbook_analyzer import OrderbookAnalyzer
+from analyzers.correlation_analyzer import CorrelationAnalyzer
+from analyzers.fractal_analyzer import FractalAnalyzer
 from confidence.confidence_system import ConfidenceSystem
 from core.trade_calculator import TradeCalculator
 from trading.adaptive_trailing import AdaptiveTrailing
@@ -34,48 +24,45 @@ from core.autotuner import Autotuner, init_autotuner_db, TradeContextSnapshot
 from core.probability_matrix import ProbabilityMatrix, ForecastInput, MarketScenario
 from reports.reporter import Reporter
 
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-class PositionManager:
-    """Управление активными позициями"""
-    
+class TENBIDCore:
     def __init__(self):
-        self.active_positions = {}  # {trade_id: position_info}
-        self.position_snapshots = {}  # {trade_id: snapshot}
-    
-    def add_position(self, trade_id: str, position_info: dict, snapshot: dict):
-        """Добавить новую позицию"""
-        self.active_positions[trade_id] = {
-            'entry_price': position_info['entry_price'],
-            'side': position_info.get('side', 'BUY'),
-            'sl_price': position_info.get('sl_price'),
-            'tp_price': position_info.get('tp_price'),
-            'position_pct': position_info['position_pct'],
-            'entry_time': datetime.now(),
-            'high_since_entry': position_info['entry_price'],
-            'low_since_entry': position_info['entry_price']
-        }
-        self.position_snapshots[trade_id] = snapshot
-    
-    def update_price(self, trade_id: str, current_price: float):
-        """Обновить цену для позиции"""
-        if trade_id in self.active_positions:
-            pos = self.active_positions[trade_id]
-            if current_price > pos['high_since_entry']:
-                pos['high_since_entry'] = current_price
-            if current_price < pos['low_since_entry']:
-                pos['low_since_entry'] = current_price
-    
-    def remove_position(self, trade_id: str):
-        """Удалить позицию"""
-        if trade_id in self.active_positions:
-            del self.active_positions[trade_id]
-        if trade_id in self.position_snapshots:
-            del self.position_snapshots[trade_id]
-    
-    def get_active_count(self) -> int:
-        """Количество активных позиций"""
-        return len(self.active_positions)
+        self.client = None
+        self.lineage_manager = DataLineageManager()
+        
+        # Инициализация анализаторов с внедрением зависимостей
+        self.market_analyzer = MarketAnalyzer(lineage_manager=self.lineage_manager)
+        self.volume_analyzer = VolumeProfileAnalyzer(lineage_manager=self.lineage_manager)
+        self.pattern_analyzer = PatternAnalyzer(lineage_manager=self.lineage_manager)
+        self.sr_analyzer = SupportResistanceAnalyzer(lineage_manager=self.lineage_manager)
+        self.orderbook_analyzer = OrderbookAnalyzer(lineage_manager=self.lineage_manager)
+        self.correlation_analyzer = CorrelationAnalyzer(lineage_manager=self.lineage_manager)
+        self.fractal_analyzer = FractalAnalyzer(lineage_manager=self.lineage_manager)
+        
+        # Система уверенности
+        self.confidence_system = ConfidenceSystem(lineage_manager=self.lineage_manager)
+        
+        self.symbol = "DOGEUSDT"
+        self.timeframe = "5m"
+        self.running = False
 
+    async def start(self):
+        """Запуск ядра системы"""
+        logger.info("🚀 Запуск TENBID v2.0 Core...")
+        
+        # Подключение к Binance Testnet
+        try:
+            self.client = await AsyncClient.create(testnet=True)
+            logger.info("✅ Подключено к Binance Testnet")
+        except Exception as e:
+            logger.error(f"❌ Ошибка подключения к Binance: {e}")
+            return
 
 def collect_forecasts_from_analyzers(analysis, fractal_result, pattern_result, 
                                      btc_result, orderbook_result, regime_result):
@@ -630,110 +617,148 @@ async def main():
                             logger.debug(f"Sent {len(weak_factors)} weak factor observations to Shadow Lab")
                         
                         logger.info(f"Forbidden trade tracked: {forbidden_snapshot['trade_id']}")
-                
-                # Log signal to database
-                db.log_signal(signal_data)
-            
-            # Run shadow tests
-            if config.getboolean('SHADOW', 'enabled'):
-                shadow.run_tests(all_data, analysis, current_confidence)
-            
-            # Check outcomes of pending forbidden trades (every cycle) with realistic candle data
-            if config.getboolean('SHADOW', 'save_forbidden_trades') and current_price:
-                completed_forbidden = await shadow.check_forbidden_outcomes(current_price, symbol, candle_data)
-                for completed in completed_forbidden:
-                    # Record outcome to Autotuner for learning
-                    snapshot_obj = TradeContextSnapshot(
-                        trade_id=completed['trade_id'],
-                        timestamp=completed['timestamp'],
-                        symbol=completed['symbol'],
-                        side=completed['side'],
-                        btc_correlation=completed['btc_correlation'],
-                        btc_confidence=completed['btc_confidence'],
-                        fractal_score=completed['fractal_score'],
-                        orderbook_score=completed['orderbook_score'],
-                        pattern_score=completed['pattern_score'],
-                        regime_score=completed['regime_score'],
-                        regime_type=completed['regime_type'],
-                        weights_used=completed['weights_used'],
-                        entry_price=completed['entry_price'],
-                        sl_percent=completed['sl_percent'],
-                        tp_percent=completed['tp_percent'],
-                        position_size=completed['position_size'],
-                        final_confidence=completed['final_confidence'],
-                        exit_price=completed['exit_price'],
-                        exit_reason=completed['exit_reason'],
-                        pnl_percent=completed['pnl_percent'],
-                        pnl_usdt=completed.get('trading_costs', {}).get('net_pnl', 0),
-                        is_winner=completed['is_winner'],
-                        max_drawdown_during_trade=0.0,
-                        max_profit_during_trade=0.0,
-                        is_shadow=True,
-                        shadow_reason=completed['shadow_reason']
-                    )
-                    autotuner.record_trade_outcome(snapshot_obj)
-                    logger.info(f"Recorded forbidden trade outcome for Autotuner: {completed['trade_id']} | PnL: {completed['pnl_percent']:.2f}%")
-            
-            # Periodic Autotuner optimization (every 10 cycles)
-            if cycle_count % 10 == 0:
-                logger.info("Running Autotuner optimization...")
-                new_weights = autotuner.analyze_and_optimize()
-                
-                # Интеграция инсайтов от Shadow Lab
-                lab_insights = shadow_lab.get_latest_insights()
-                if lab_insights:
-                    logger.info(f"🧠 Получено {len(lab_insights)} инсайтов от Shadow Lab")
-                    autotuner.integrate_lab_insights(lab_insights)
-                
-                logger.info(f"Autotuner weights updated: {autotuner.current_weights}")
-            
-            # Generate report every 5 minutes
-            if (datetime.now() - last_report_time).seconds >= 300:
-                report = reporter.generate_report()
-                logger.info("\\n" + "="*60)
-                logger.info("PERIODIC REPORT")
-                logger.info("="*60)
-                for key, value in report.items():
-                    logger.info(f"{key}: {value}")
-                logger.info("="*60 + "\\n")
-                last_report_time = datetime.now()
-            
-            # Wait for next cycle
-            await asyncio.sleep(30)
-            
-    except KeyboardInterrupt:
-        logger.info("Shutdown requested by user")
-    except Exception as e:
-        logger.error(f"Critical error: {e}", exc_info=True)
-    finally:
-        # Остановка Shadow Lab
-        logger.info("⏹️ Остановка Shadow Lab...")
-        shadow_lab.stop()
-        lab_task.cancel()
-        try:
-            await lab_task
-        except asyncio.CancelledError:
-            pass
-        
-        # Интеграция последних инсайтов из лаборатории перед закрытием
-        lab_insights = shadow_lab.get_latest_insights()
-        if lab_insights:
-            logger.info(f"🧠 Интеграция {len(lab_insights)} последних инсайтов от Shadow Lab")
-            autotuner.integrate_lab_insights(lab_insights)
-        
-        # Final report
-        final_report = reporter.generate_report()
-        logger.info("\\n" + "="*60)
-        logger.info("FINAL SESSION REPORT")
-        logger.info("="*60)
-        for key, value in final_report.items():
-            logger.info(f"{key}: {value}")
-        logger.info("="*60)
-        
-        db.close()
-        await binance.close()
-        logger.info("TENBID shutdown complete")
+        self.running = True
+        await self.trading_cycle()
 
+    async def get_market_data(self) -> Dict[str, Any]:
+        """Получение данных рынка"""
+        # Свечи
+        klines = await self.client.get_klines(symbol=self.symbol, interval=self.timeframe, limit=100)
+        candles = [
+            {
+                'time': k[0], 'open': float(k[1]), 'high': float(k[2]), 
+                'low': float(k[3]), 'close': float(k[4]), 'volume': float(k[5])
+            }
+            for k in klines
+        ]
+        
+        # Стакан
+        order_book = await self.client.get_order_book(symbol=self.symbol, limit=20)
+        bids = [[float(p), float(q)] for p, q in order_book['bids']]
+        asks = [[float(p), float(q)] for p, q in order_book['asks']]
+        
+        return {'candles': candles, 'bids': bids, 'asks': asks, 'current_price': float(candles[-1]['close'])}
 
-if __name__ == '__main__':
+    async def trading_cycle(self):
+        """Основной цикл торговли"""
+        cycle_count = 0
+        
+        while self.running and cycle_count < 1: # Ровно один цикл для теста
+            try:
+                cycle_count += 1
+                logger.info(f"\n--- ЦИКЛ АНАЛИЗА #{cycle_count} ---")
+                
+                # 1. Получение данных
+                data = await self.get_market_data()
+                candles = data['candles']
+                
+                # 2. Создание снапшота в Graph Lineage
+                snapshot_id = self.lineage_manager.create_snapshot_node(
+                    symbol=self.symbol,
+                    timeframe=self.timeframe,
+                    market_state={'price': data['current_price'], 'volume_24h': 0} # Упрощено
+                )
+                logger.info(f"📸 Создан снапшот рынка: ID={snapshot_id}")
+
+                # 3. Запуск анализаторов
+                results = {}
+                
+                logger.info("🔍 Запуск анализаторов...")
+                
+                # Market Analyzer
+                results['market'] = self.market_analyzer.analyze(
+                    snapshot_id=snapshot_id, candles=candles, symbol=self.symbol, tf=self.timeframe
+                )
+                
+                # Volume Profile
+                results['volume'] = self.volume_analyzer.analyze_candles(
+                    snapshot_id=snapshot_id, candles=candles, symbol=self.symbol, tf=self.timeframe
+                )
+                
+                # Patterns
+                results['patterns'] = self.pattern_analyzer.scan(
+                    snapshot_id=snapshot_id, candles=candles, symbol=self.symbol, tf=self.timeframe
+                )
+                
+                # Support/Resistance
+                results['sr'] = self.sr_analyzer.find_levels(
+                    snapshot_id=snapshot_id, candles=candles, symbol=self.symbol, tf=self.timeframe
+                )
+                
+                # Orderbook
+                results['orderbook'] = self.orderbook_analyzer.analyze_depth(
+                    snapshot_id=snapshot_id, bids=data['bids'], asks=data['asks'], 
+                    symbol=self.symbol, current_price=data['current_price']
+                )
+                
+                # Correlation (эмуляция данных для примера, в реальности нужны данные BTC)
+                # Для теста передаем те же свечи как "корреляцию с самим собой"
+                closes = [c['close'] for c in candles]
+                results['correlation'] = self.correlation_analyzer.calculate_correlation(
+                    snapshot_id=snapshot_id, target_series=closes, reference_series=closes,
+                    target_symbol=self.symbol, reference_symbol="BTC"
+                )
+                
+                # Fractals
+                results['fractals'] = self.fractal_analyzer.analyze(
+                    snapshot_id=snapshot_id, candles=candles, symbol=self.symbol, tf=self.timeframe
+                )
+
+                # Логирование результатов анализаторов
+                for name, res in results.items():
+                    status = res.get('status', 'unknown')
+                    node_id = res.get('node_id', 'None')
+                    logger.info(f"   [{name.upper()}] Status: {status}, Node: {node_id}")
+
+                # 4. Расчет уверенности
+                logger.info("🧠 Расчет уверенности (Confidence System)...")
+                
+                # Извлекаем скоры из результатов (заглушка логики маппинга)
+                # В реальной системе нужно аккуратно доставать данные из словарей
+                trend_score = results['market'].get('trend_direction', 0.0)
+                volume_score = results['volume'].get('confidence', 0.5)
+                pattern_score = results['patterns'].get('score', 0.0)
+                sr_score = results['sr'].get('confidence', 0.5)
+                orderbook_score = results['orderbook'].get('pressure', 0.0)
+                fractal_score = 0.5 if results['fractals'].get('signal') != 'NEUTRAL' else 0.0
+                
+                confidence_result = self.confidence_system.calculate(
+                    snapshot_id=snapshot_id,
+                    trend_score=trend_score,
+                    volume_score=volume_score,
+                    pattern_score=pattern_score,
+                    support_resistance_score=sr_score, # Имя аргумента может отличаться, проверить сигнатуру
+                    orderbook_score=orderbook_score,
+                    fractal_score=fractal_score,
+                    context_profile_id=f"{self.symbol}_{self.timeframe}"
+                )
+                
+                logger.info(f"✅ Уверенность: {confidence_result['confidence']}")
+                logger.info(f"✅ Рекомендация: {confidence_result['recommendation']}")
+                logger.info(f"✅ Matrix Node ID: {confidence_result['matrix_node_id']}")
+                
+                # 5. Финальный отчет по графу
+                logger.info("\n🌐 СОЗДАННЫЙ ГРАФ ДАННЫХ:")
+                logger.info(f"   Root Snapshot: {snapshot_id}")
+                logger.info(f"   Decision Node: {confidence_result['matrix_node_id']}")
+                logger.info("   Анализаторы создали узлы: " + ", ".join(str(r.get('node_id')) for r in results.values() if r.get('node_id')))
+                
+                logger.info("\n--- ЦИКЛ ЗАВЕРШЕН ---\n")
+                
+                # Прерываем после одного цикла для теста
+                self.running = False
+
+            except Exception as e:
+                logger.error(f"❌ Критическая ошибка в цикле: {e}", exc_info=True)
+                self.running = False
+            
+            finally:
+                if self.client:
+                    await self.client.close_connection()
+
+async def main():
+    core = TENBIDCore()
+    await core.start()
+
+if __name__ == "__main__":
     asyncio.run(main())

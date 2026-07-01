@@ -11,14 +11,205 @@ from typing import Dict, List, Optional, Tuple
 from core.analysis_context import AnalysisContext
 from core.data_lineage import DataLineageManager, LineageNode, LineageGraph, DataSource, DataQuality, LineageTracker
 from analyzers.multi_tf_context import MultiTFContextAggregator
+import logging
+from typing import Dict, List, Any, Optional, Tuple
+from core.data_lineage import DataLineageManager
+
+logger = logging.getLogger(__name__)
 
 class FractalAnalyzer:
-    def __init__(self, config=None):
-        self.name = "Fractal_Analysis"
-        self.config = config
-        # Таймфреймы для анализа (если переданы в конфиге)
-        self.timeframes = ['1h', '15m', '5m']  # Default hierarchy
-        if config and config.has_option('MULTITF', 'timeframe_hierarchy'):
+    """
+    Анализатор фрактальных структур рынка (по Биллу Вильямсу и модификациям).
+    Идентифицирует локальные экстремумы (фракталы), определяет их статус (активен/сломан)
+    и регистрирует результаты в графе данных v2.0.
+    """
+
+    def __init__(self, lineage_manager: DataLineageManager, fractal_window: int = 2):
+        """
+        :param lineage_manager: Менеджер графа данных.
+        :param fractal_window: Количество свечей слева/справа для подтверждения фрактала (обычно 2).
+        """
+        self.lineage_manager = lineage_manager
+        self.fractal_window = fractal_window
+        self.logger = logging.getLogger(__name__)
+
+    def analyze(self, snapshot_id: str, candles: List[Dict[str, Any]], symbol: str, tf: str) -> Dict[str, Any]:
+        """
+        Сканирует свечи на наличие фракталов, оценивает их значимость и создает узлы lineage.
+
+        :param snapshot_id: ID корневого снимка рынка.
+        :param candles: Список свечей (OHLCV).
+        :param symbol: Тикер актива.
+        :param tf: Таймфрейм.
+        :return: Словарь с найденными фракталами, ID узлов и общим сигналом.
+        """
+        if len(candles) < (self.fractal_window * 2 + 1):
+            return {
+                'status': 'error',
+                'message': 'Insufficient data for fractal analysis',
+                'fractals': [],
+                'node_id': None,
+                'signal': 'NEUTRAL'
+            }
+
+        try:
+            # 1. Поиск всех фракталов
+            detected_fractals = self._find_fractals(candles)
+
+            if not detected_fractals:
+                return {
+                    'status': 'success',
+                    'message': 'No fractals found in range',
+                    'fractals': [],
+                    'node_id': None,
+                    'signal': 'NEUTRAL'
+                }
+
+            # 2. Фильтрация и оценка значимости
+            significant_fractals = []
+            up_fractals = []
+            down_fractals = []
+
+            current_price = candles[-1]['close']
+
+            for f in detected_fractals:
+                is_broken = False
+                if f['type'] == 'UP' and current_price > f['price']:
+                    is_broken = True
+                elif f['type'] == 'DOWN' and current_price < f['price']:
+                    is_broken = True
+                
+                f['is_broken'] = is_broken
+                f['distance_percent'] = abs(current_price - f['price']) / current_price * 100
+                
+                significant_fractals.append(f)
+                
+                if f['type'] == 'UP':
+                    up_fractals.append(f)
+                else:
+                    down_fractals.append(f)
+
+            # 3. Формирование сигнала
+            signal = 'NEUTRAL'
+            last_up = up_fractals[-1] if up_fractals else None
+            last_down = down_fractals[-1] if down_fractals else None
+
+            if last_up and last_up['is_broken'] and (not last_down or not last_down['is_broken']):
+                signal = 'BULLISH_BREAKOUT'
+            elif last_down and last_down['is_broken'] and (not last_up or not last_up['is_broken']):
+                signal = 'BEARISH_BREAKOUT'
+            elif last_up and last_down and last_up['is_broken'] and last_down['is_broken']:
+                signal = 'HIGH_VOLATILITY'
+
+            # 4. Подготовка данных для узла Lineage
+            recent_fractals = significant_fractals[-5:]
+            fractal_vector = [
+                {
+                    'index': f['index'],
+                    'type': f['type'],
+                    'price': f['price'],
+                    'broken': f['is_broken'],
+                    'distance_pct': round(f['distance_percent'], 2)
+                }
+                for f in recent_fractals
+            ]
+
+            result_vector = {
+                'total_fractals_found': len(significant_fractals),
+                'last_up_fractal': up_fractals[-1]['price'] if up_fractals else None,
+                'last_down_fractal': down_fractals[-1]['price'] if down_fractals else None,
+                'signal': signal,
+                'recent_fractals': fractal_vector,
+                'market_structure': 'UPTREND' if (last_up and current_price > last_up['price']) else ('DOWNTREND' if (last_down and current_price < last_down['price']) else 'RANGE')
+            }
+
+            # 5. Расчет уверенности
+            confidence_score = 0.5
+            if len(significant_fractals) > 3:
+                confidence_score += 0.2
+            if signal != 'NEUTRAL':
+                confidence_score += 0.2
+            
+            confidence_score = min(1.0, confidence_score)
+
+            # 6. Создание узла Lineage
+            node_id = self.lineage_manager.create_analysis_node(
+                parent_snapshot_id=snapshot_id,
+                analyzer_name=f"fractal_structure_{tf}",
+                result_vector=result_vector,
+                confidence=confidence_score,
+                additional_meta={
+                    'symbol': symbol,
+                    'timeframe': tf,
+                    'window_size': self.fractal_window,
+                    'candles_analyzed': len(candles)
+                }
+            )
+
+            return {
+                'status': 'success',
+                'node_id': node_id,
+                'fractals': significant_fractals,
+                'signal': signal,
+                'market_structure': result_vector['market_structure'],
+                'details': result_vector
+            }
+
+        except Exception as e:
+            self.logger.error(f"Ошибка фрактального анализа ({symbol} {tf}): {e}", exc_info=True)
+            return {
+                'status': 'error',
+                'message': str(e),
+                'fractals': [],
+                'node_id': None,
+                'signal': 'NEUTRAL'
+            }
+
+    def _find_fractals(self, candles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Находит фракталы в списке свечей.
+        """
+        fractals = []
+        n = len(candles)
+        start_idx = self.fractal_window
+        end_idx = n - self.fractal_window
+
+        for i in range(start_idx, end_idx):
+            current_high = candles[i]['high']
+            current_low = candles[i]['low']
+            
+            is_up = True
+            is_down = True
+
+            for j in range(1, self.fractal_window + 1):
+                left_high = candles[i-j]['high']
+                right_high = candles[i+j]['high']
+                left_low = candles[i-j]['low']
+                right_low = candles[i+j]['low']
+
+                if left_high >= current_high or right_high >= current_high:
+                    is_up = False
+                
+                if left_low <= current_low or right_low <= current_low:
+                    is_down = False
+            
+            if is_up:
+                fractals.append({
+                    'index': i,
+                    'type': 'UP',
+                    'price': current_high,
+                    'candle_time': candles[i].get('time', 0)
+                })
+            
+            if is_down:
+                fractals.append({
+                    'index': i,
+                    'type': 'DOWN',
+                    'price': current_low,
+                    'candle_time': candles[i].get('time', 0)
+                })
+
+        return fractals
             self.timeframes = config.get_list('MULTITF', 'timeframe_hierarchy')
     
     def analyze(self, symbol: str, context: AnalysisContext) -> Dict:
