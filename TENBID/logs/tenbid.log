@@ -3033,3 +3033,34 @@ AttributeError: 'tuple' object has no attribute 'iloc'
 2026-05-20 08:05:38 | INFO     | [CYCLE_194] HOLD | Confidence: 0.484 < 0.710
 2026-05-20 08:05:38 | INFO     | Forbidden trade tracked: forbidden_1779264338.880639 (confidence: 0.484)
 2026-05-20 08:05:38 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1779264268.536194 | PnL: -0.17%
+2026-07-01 10:54:52 | INFO     | ============================================================
+2026-07-01 10:54:52 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-07-01 10:54:52 | INFO     | Mode: TESTNET
+2026-07-01 10:54:52 | INFO     | Symbol: DOGEUSDT
+2026-07-01 10:54:52 | INFO     | Initial Balance: 200.0 USDT
+2026-07-01 10:54:52 | INFO     | ============================================================
+2026-07-01 10:54:52 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-07-01 10:54:53 | INFO     | Connected to Binance API
+2026-07-01 10:54:53 | INFO     | Warming up with 300 candles...
+2026-07-01 10:54:53 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-07-01 10:54:53 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-07-01 10:54:58 | INFO     | [CYCLE_1] HOLD | Confidence: 0.571 < 0.713
+2026-07-01 10:54:58 | INFO     | Forbidden trade tracked: forbidden_1782903298.545716 (confidence: 0.571)
+2026-07-01 10:55:16 | INFO     | ⏹️ Остановка Shadow Lab...
+2026-07-01 10:55:16 | INFO     | \n============================================================
+2026-07-01 10:55:16 | INFO     | FINAL SESSION REPORT
+2026-07-01 10:55:16 | INFO     | ============================================================
+2026-07-01 10:55:16 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-07-01 10:55:16 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-07-01 10:55:16 | INFO     | Projected Monthly PnL: 0.0%
+2026-07-01 10:55:16 | INFO     | Total Signals: 207
+2026-07-01 10:55:16 | INFO     | Open Decisions: 0
+2026-07-01 10:55:16 | INFO     | Hold Decisions: 207
+2026-07-01 10:55:16 | INFO     | Total Trades: 0
+2026-07-01 10:55:16 | INFO     | Winning Trades: 0
+2026-07-01 10:55:16 | INFO     | Losing Trades: 0
+2026-07-01 10:55:16 | INFO     | Winrate: 0.0%
+2026-07-01 10:55:16 | INFO     | Shadow Winrate: 59.4%
+2026-07-01 10:55:16 | INFO     | Avg Trade PnL: N/A
+2026-07-01 10:55:16 | INFO     | ============================================================
+2026-07-01 10:55:16 | INFO     | TENBID shutdown complete
