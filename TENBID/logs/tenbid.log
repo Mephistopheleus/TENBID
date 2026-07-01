@@ -3175,3 +3175,238 @@ AttributeError: 'tuple' object has no attribute 'iloc'
 2026-07-01 11:13:26 | INFO     | Forbidden trade tracked: forbidden_1782904406.841049 (confidence: 0.475)
 2026-07-01 11:14:02 | INFO     | [CYCLE_2] HOLD | Confidence: 0.477 < 0.712
 2026-07-01 11:14:02 | INFO     | Forbidden trade tracked: forbidden_1782904442.011472 (confidence: 0.477)
+2026-07-01 11:17:11 | INFO     | ============================================================
+2026-07-01 11:17:11 | INFO     | TENBID - Advanced Scalping System Starting...
+2026-07-01 11:17:11 | INFO     | Mode: TESTNET
+2026-07-01 11:17:11 | INFO     | Symbol: DOGEUSDT
+2026-07-01 11:17:11 | INFO     | Initial Balance: 200.0 USDT
+2026-07-01 11:17:11 | INFO     | ============================================================
+2026-07-01 11:17:11 | INFO     | 🔬 Shadow Lab запущена в фоновом режиме
+2026-07-01 11:17:11 | INFO     | Connected to Binance API
+2026-07-01 11:17:11 | INFO     | Warming up with 300 candles...
+2026-07-01 11:17:11 | INFO     | Loaded 300 base candles with lineage: binance_api
+2026-07-01 11:17:11 | INFO     | Built 7 synthetic timeframes with lineage tracking
+2026-07-01 11:17:16 | INFO     | [CYCLE_1] HOLD | Confidence: 0.471 < 0.712
+2026-07-01 11:17:16 | INFO     | Forbidden trade tracked: forbidden_1782904636.97315 (confidence: 0.471)
+2026-07-01 11:17:52 | INFO     | [CYCLE_2] HOLD | Confidence: 0.475 < 0.712
+2026-07-01 11:17:52 | INFO     | Forbidden trade tracked: forbidden_1782904672.141234 (confidence: 0.475)
+2026-07-01 11:18:27 | INFO     | [CYCLE_3] HOLD | Confidence: 0.475 < 0.712
+2026-07-01 11:18:27 | INFO     | Forbidden trade tracked: forbidden_1782904707.298355 (confidence: 0.475)
+2026-07-01 11:18:27 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904636.97315 | PnL: -0.17%
+2026-07-01 11:19:02 | INFO     | [CYCLE_4] HOLD | Confidence: 0.476 < 0.712
+2026-07-01 11:19:02 | INFO     | Forbidden trade tracked: forbidden_1782904742.469405 (confidence: 0.476)
+2026-07-01 11:19:02 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904672.141234 | PnL: -0.17%
+2026-07-01 11:19:37 | INFO     | [CYCLE_5] HOLD | Confidence: 0.482 < 0.713
+2026-07-01 11:19:37 | INFO     | Forbidden trade tracked: forbidden_1782904777.629697 (confidence: 0.482)
+2026-07-01 11:19:37 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904707.298355 | PnL: -0.17%
+2026-07-01 11:20:12 | INFO     | [CYCLE_6] HOLD | Confidence: 0.485 < 0.713
+2026-07-01 11:20:12 | INFO     | Forbidden trade tracked: forbidden_1782904812.807386 (confidence: 0.485)
+2026-07-01 11:20:12 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904742.469405 | PnL: -0.17%
+2026-07-01 11:20:47 | INFO     | [CYCLE_7] HOLD | Confidence: 0.463 < 0.712
+2026-07-01 11:20:47 | INFO     | Forbidden trade tracked: forbidden_1782904847.988646 (confidence: 0.463)
+2026-07-01 11:20:47 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904777.629697 | PnL: -0.17%
+2026-07-01 11:21:23 | INFO     | [CYCLE_8] HOLD | Confidence: 0.464 < 0.712
+2026-07-01 11:21:23 | INFO     | Forbidden trade tracked: forbidden_1782904883.153682 (confidence: 0.464)
+2026-07-01 11:21:23 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904812.807386 | PnL: -0.17%
+2026-07-01 11:21:58 | INFO     | [CYCLE_9] HOLD | Confidence: 0.464 < 0.712
+2026-07-01 11:21:58 | INFO     | Forbidden trade tracked: forbidden_1782904918.310106 (confidence: 0.464)
+2026-07-01 11:21:58 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904847.988646 | PnL: -0.13%
+2026-07-01 11:22:33 | INFO     | [CYCLE_10] HOLD | Confidence: 0.465 < 0.712
+2026-07-01 11:22:33 | INFO     | Forbidden trade tracked: forbidden_1782904953.466433 (confidence: 0.465)
+2026-07-01 11:22:33 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904883.153682 | PnL: -0.17%
+2026-07-01 11:22:33 | INFO     | Running Autotuner optimization...
+2026-07-01 11:22:33 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-07-01 11:22:33 | INFO     | \n============================================================
+2026-07-01 11:22:33 | INFO     | PERIODIC REPORT
+2026-07-01 11:22:33 | INFO     | ============================================================
+2026-07-01 11:22:33 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-07-01 11:22:33 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-07-01 11:22:33 | INFO     | Projected Monthly PnL: 0.0%
+2026-07-01 11:22:33 | INFO     | Total Signals: 18
+2026-07-01 11:22:33 | INFO     | Open Decisions: 0
+2026-07-01 11:22:33 | INFO     | Hold Decisions: 18
+2026-07-01 11:22:33 | INFO     | Total Trades: 0
+2026-07-01 11:22:33 | INFO     | Winning Trades: 0
+2026-07-01 11:22:33 | INFO     | Losing Trades: 0
+2026-07-01 11:22:33 | INFO     | Winrate: 0.0%
+2026-07-01 11:22:33 | INFO     | Shadow Winrate: 0.0%
+2026-07-01 11:22:33 | INFO     | Avg Trade PnL: N/A
+2026-07-01 11:22:33 | INFO     | ============================================================\n
+2026-07-01 11:23:08 | INFO     | [CYCLE_11] HOLD | Confidence: 0.466 < 0.712
+2026-07-01 11:23:08 | INFO     | Forbidden trade tracked: forbidden_1782904988.630903 (confidence: 0.466)
+2026-07-01 11:23:08 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904918.310106 | PnL: -0.17%
+2026-07-01 11:23:43 | INFO     | [CYCLE_12] HOLD | Confidence: 0.467 < 0.712
+2026-07-01 11:23:43 | INFO     | Forbidden trade tracked: forbidden_1782905023.791105 (confidence: 0.467)
+2026-07-01 11:23:43 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904953.466433 | PnL: -0.17%
+2026-07-01 11:24:18 | INFO     | [CYCLE_13] HOLD | Confidence: 0.470 < 0.712
+2026-07-01 11:24:18 | INFO     | Forbidden trade tracked: forbidden_1782905058.968585 (confidence: 0.470)
+2026-07-01 11:24:18 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782904988.630903 | PnL: -0.17%
+2026-07-01 11:24:54 | INFO     | [CYCLE_14] HOLD | Confidence: 0.471 < 0.712
+2026-07-01 11:24:54 | INFO     | Forbidden trade tracked: forbidden_1782905094.130133 (confidence: 0.471)
+2026-07-01 11:24:54 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905023.791105 | PnL: -0.17%
+2026-07-01 11:25:29 | INFO     | [CYCLE_15] HOLD | Confidence: 0.466 < 0.712
+2026-07-01 11:25:29 | INFO     | Forbidden trade tracked: forbidden_1782905129.33627 (confidence: 0.466)
+2026-07-01 11:25:29 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905058.968585 | PnL: -0.11%
+2026-07-01 11:26:04 | INFO     | [CYCLE_16] HOLD | Confidence: 0.466 < 0.712
+2026-07-01 11:26:04 | INFO     | Forbidden trade tracked: forbidden_1782905164.505612 (confidence: 0.466)
+2026-07-01 11:26:04 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905094.130133 | PnL: -0.17%
+2026-07-01 11:26:39 | INFO     | [CYCLE_17] HOLD | Confidence: 0.470 < 0.712
+2026-07-01 11:26:39 | INFO     | Forbidden trade tracked: forbidden_1782905199.671991 (confidence: 0.470)
+2026-07-01 11:26:39 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905129.33627 | PnL: -0.17%
+2026-07-01 11:27:14 | INFO     | [CYCLE_18] HOLD | Confidence: 0.470 < 0.712
+2026-07-01 11:27:14 | INFO     | Forbidden trade tracked: forbidden_1782905234.831987 (confidence: 0.470)
+2026-07-01 11:27:14 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905164.505612 | PnL: -0.17%
+2026-07-01 11:27:50 | INFO     | [CYCLE_19] HOLD | Confidence: 0.470 < 0.712
+2026-07-01 11:27:50 | INFO     | Forbidden trade tracked: forbidden_1782905270.028112 (confidence: 0.470)
+2026-07-01 11:27:50 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905199.671991 | PnL: -0.17%
+2026-07-01 11:27:50 | INFO     | \n============================================================
+2026-07-01 11:27:50 | INFO     | PERIODIC REPORT
+2026-07-01 11:27:50 | INFO     | ============================================================
+2026-07-01 11:27:50 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-07-01 11:27:50 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-07-01 11:27:50 | INFO     | Projected Monthly PnL: 0.0%
+2026-07-01 11:27:50 | INFO     | Total Signals: 27
+2026-07-01 11:27:50 | INFO     | Open Decisions: 0
+2026-07-01 11:27:50 | INFO     | Hold Decisions: 27
+2026-07-01 11:27:50 | INFO     | Total Trades: 0
+2026-07-01 11:27:50 | INFO     | Winning Trades: 0
+2026-07-01 11:27:50 | INFO     | Losing Trades: 0
+2026-07-01 11:27:50 | INFO     | Winrate: 0.0%
+2026-07-01 11:27:50 | INFO     | Shadow Winrate: 0.0%
+2026-07-01 11:27:50 | INFO     | Avg Trade PnL: N/A
+2026-07-01 11:27:50 | INFO     | ============================================================\n
+2026-07-01 11:28:25 | INFO     | [CYCLE_20] HOLD | Confidence: 0.470 < 0.712
+2026-07-01 11:28:25 | INFO     | Forbidden trade tracked: forbidden_1782905305.191934 (confidence: 0.470)
+2026-07-01 11:28:25 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905234.831987 | PnL: -0.17%
+2026-07-01 11:28:25 | INFO     | Running Autotuner optimization...
+2026-07-01 11:28:25 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-07-01 11:29:00 | INFO     | [CYCLE_21] HOLD | Confidence: 0.472 < 0.712
+2026-07-01 11:29:00 | INFO     | Forbidden trade tracked: forbidden_1782905340.36534 (confidence: 0.472)
+2026-07-01 11:29:00 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905270.028112 | PnL: -0.17%
+2026-07-01 11:29:35 | INFO     | [CYCLE_22] HOLD | Confidence: 0.473 < 0.712
+2026-07-01 11:29:35 | INFO     | Forbidden trade tracked: forbidden_1782905375.514703 (confidence: 0.473)
+2026-07-01 11:29:35 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905305.191934 | PnL: -0.17%
+2026-07-01 11:30:10 | INFO     | [CYCLE_23] HOLD | Confidence: 0.463 < 0.711
+2026-07-01 11:30:10 | INFO     | Forbidden trade tracked: forbidden_1782905410.670076 (confidence: 0.463)
+2026-07-01 11:30:10 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905340.36534 | PnL: -0.17%
+2026-07-01 11:30:45 | INFO     | [CYCLE_24] HOLD | Confidence: 0.464 < 0.711
+2026-07-01 11:30:45 | INFO     | Forbidden trade tracked: forbidden_1782905445.850003 (confidence: 0.464)
+2026-07-01 11:30:45 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905375.514703 | PnL: -0.17%
+2026-07-01 11:31:21 | INFO     | [CYCLE_25] HOLD | Confidence: 0.466 < 0.712
+2026-07-01 11:31:21 | INFO     | Forbidden trade tracked: forbidden_1782905481.006929 (confidence: 0.466)
+2026-07-01 11:31:21 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905410.670076 | PnL: -0.11%
+2026-07-01 11:31:56 | INFO     | [CYCLE_26] HOLD | Confidence: 0.468 < 0.712
+2026-07-01 11:31:56 | INFO     | Forbidden trade tracked: forbidden_1782905516.213428 (confidence: 0.468)
+2026-07-01 11:31:56 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905445.850003 | PnL: -0.17%
+2026-07-01 11:32:31 | INFO     | [CYCLE_27] HOLD | Confidence: 0.468 < 0.712
+2026-07-01 11:32:31 | INFO     | Forbidden trade tracked: forbidden_1782905551.409519 (confidence: 0.468)
+2026-07-01 11:32:31 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905481.006929 | PnL: -0.17%
+2026-07-01 11:33:06 | INFO     | [CYCLE_28] HOLD | Confidence: 0.468 < 0.712
+2026-07-01 11:33:06 | INFO     | Forbidden trade tracked: forbidden_1782905586.611315 (confidence: 0.468)
+2026-07-01 11:33:06 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905516.213428 | PnL: -0.17%
+2026-07-01 11:33:06 | INFO     | \n============================================================
+2026-07-01 11:33:06 | INFO     | PERIODIC REPORT
+2026-07-01 11:33:06 | INFO     | ============================================================
+2026-07-01 11:33:06 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-07-01 11:33:06 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-07-01 11:33:06 | INFO     | Projected Monthly PnL: 0.0%
+2026-07-01 11:33:06 | INFO     | Total Signals: 36
+2026-07-01 11:33:06 | INFO     | Open Decisions: 0
+2026-07-01 11:33:06 | INFO     | Hold Decisions: 36
+2026-07-01 11:33:06 | INFO     | Total Trades: 0
+2026-07-01 11:33:06 | INFO     | Winning Trades: 0
+2026-07-01 11:33:06 | INFO     | Losing Trades: 0
+2026-07-01 11:33:06 | INFO     | Winrate: 0.0%
+2026-07-01 11:33:06 | INFO     | Shadow Winrate: 0.0%
+2026-07-01 11:33:06 | INFO     | Avg Trade PnL: N/A
+2026-07-01 11:33:06 | INFO     | ============================================================\n
+2026-07-01 11:33:41 | INFO     | [CYCLE_29] HOLD | Confidence: 0.468 < 0.712
+2026-07-01 11:33:41 | INFO     | Forbidden trade tracked: forbidden_1782905621.78815 (confidence: 0.468)
+2026-07-01 11:33:41 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905551.409519 | PnL: -0.17%
+2026-07-01 11:34:16 | INFO     | [CYCLE_30] HOLD | Confidence: 0.471 < 0.712
+2026-07-01 11:34:16 | INFO     | Forbidden trade tracked: forbidden_1782905656.952108 (confidence: 0.471)
+2026-07-01 11:34:16 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905586.611315 | PnL: -0.17%
+2026-07-01 11:34:16 | INFO     | Running Autotuner optimization...
+2026-07-01 11:34:16 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-07-01 11:34:52 | INFO     | [CYCLE_31] HOLD | Confidence: 0.474 < 0.712
+2026-07-01 11:34:52 | INFO     | Forbidden trade tracked: forbidden_1782905692.108785 (confidence: 0.474)
+2026-07-01 11:34:52 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905621.78815 | PnL: -0.17%
+2026-07-01 11:35:27 | INFO     | [CYCLE_32] HOLD | Confidence: 0.568 < 0.712
+2026-07-01 11:35:27 | INFO     | Forbidden trade tracked: forbidden_1782905727.286112 (confidence: 0.568)
+2026-07-01 11:35:27 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905656.952108 | PnL: -0.11%
+2026-07-01 11:36:02 | INFO     | [CYCLE_33] HOLD | Confidence: 0.576 < 0.712
+2026-07-01 11:36:02 | INFO     | Forbidden trade tracked: forbidden_1782905762.454435 (confidence: 0.576)
+2026-07-01 11:36:02 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905692.108785 | PnL: -0.11%
+2026-07-01 11:36:37 | INFO     | [CYCLE_34] HOLD | Confidence: 0.578 < 0.712
+2026-07-01 11:36:37 | INFO     | Forbidden trade tracked: forbidden_1782905797.593989 (confidence: 0.578)
+2026-07-01 11:36:37 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905727.286112 | PnL: -0.11%
+2026-07-01 11:37:12 | INFO     | [CYCLE_35] HOLD | Confidence: 0.579 < 0.712
+2026-07-01 11:37:12 | INFO     | Forbidden trade tracked: forbidden_1782905832.762105 (confidence: 0.579)
+2026-07-01 11:37:12 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905762.454435 | PnL: -0.17%
+2026-07-01 11:37:47 | INFO     | [CYCLE_36] HOLD | Confidence: 0.583 < 0.712
+2026-07-01 11:37:47 | INFO     | Forbidden trade tracked: forbidden_1782905867.936351 (confidence: 0.583)
+2026-07-01 11:37:47 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905797.593989 | PnL: -0.17%
+2026-07-01 11:38:23 | INFO     | [CYCLE_37] HOLD | Confidence: 0.585 < 0.712
+2026-07-01 11:38:23 | INFO     | Forbidden trade tracked: forbidden_1782905903.115307 (confidence: 0.585)
+2026-07-01 11:38:23 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905832.762105 | PnL: -0.17%
+2026-07-01 11:38:23 | INFO     | \n============================================================
+2026-07-01 11:38:23 | INFO     | PERIODIC REPORT
+2026-07-01 11:38:23 | INFO     | ============================================================
+2026-07-01 11:38:23 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-07-01 11:38:23 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-07-01 11:38:23 | INFO     | Projected Monthly PnL: 0.0%
+2026-07-01 11:38:23 | INFO     | Total Signals: 45
+2026-07-01 11:38:23 | INFO     | Open Decisions: 0
+2026-07-01 11:38:23 | INFO     | Hold Decisions: 45
+2026-07-01 11:38:23 | INFO     | Total Trades: 0
+2026-07-01 11:38:23 | INFO     | Winning Trades: 0
+2026-07-01 11:38:23 | INFO     | Losing Trades: 0
+2026-07-01 11:38:23 | INFO     | Winrate: 0.0%
+2026-07-01 11:38:23 | INFO     | Shadow Winrate: 13.3%
+2026-07-01 11:38:23 | INFO     | Avg Trade PnL: N/A
+2026-07-01 11:38:23 | INFO     | ============================================================\n
+2026-07-01 11:38:58 | INFO     | [CYCLE_38] HOLD | Confidence: 0.586 < 0.712
+2026-07-01 11:38:58 | INFO     | Forbidden trade tracked: forbidden_1782905938.291589 (confidence: 0.586)
+2026-07-01 11:38:58 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905867.936351 | PnL: -0.17%
+2026-07-01 11:39:33 | INFO     | [CYCLE_39] HOLD | Confidence: 0.587 < 0.712
+2026-07-01 11:39:33 | INFO     | Forbidden trade tracked: forbidden_1782905973.452053 (confidence: 0.587)
+2026-07-01 11:39:33 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905903.115307 | PnL: -0.17%
+2026-07-01 11:40:08 | INFO     | [CYCLE_40] HOLD | Confidence: 0.589 < 0.712
+2026-07-01 11:40:08 | INFO     | Forbidden trade tracked: forbidden_1782906008.593602 (confidence: 0.589)
+2026-07-01 11:40:08 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905938.291589 | PnL: -0.17%
+2026-07-01 11:40:08 | INFO     | Running Autotuner optimization...
+2026-07-01 11:40:08 | INFO     | Autotuner weights updated: {'btc_correlation': 1.5, 'fractal': 1.3, 'orderbook': 1.2, 'pattern': 1.4, 'regime': 2.0, 'trend': 1.0, 'sl_aggressiveness': 1.0, 'size_confidence': 1.0}
+2026-07-01 11:40:43 | INFO     | [CYCLE_41] HOLD | Confidence: 0.564 < 0.712
+2026-07-01 11:40:43 | INFO     | Forbidden trade tracked: forbidden_1782906043.75008 (confidence: 0.564)
+2026-07-01 11:40:43 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782905973.452053 | PnL: -0.17%
+2026-07-01 11:41:18 | INFO     | [CYCLE_42] HOLD | Confidence: 0.565 < 0.712
+2026-07-01 11:41:18 | INFO     | Forbidden trade tracked: forbidden_1782906078.936353 (confidence: 0.565)
+2026-07-01 11:41:18 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782906008.593602 | PnL: -0.15%
+2026-07-01 11:41:54 | INFO     | [CYCLE_43] HOLD | Confidence: 0.566 < 0.712
+2026-07-01 11:41:54 | INFO     | Forbidden trade tracked: forbidden_1782906114.093054 (confidence: 0.566)
+2026-07-01 11:41:54 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782906043.75008 | PnL: -0.15%
+2026-07-01 11:42:29 | INFO     | [CYCLE_44] HOLD | Confidence: 0.568 < 0.712
+2026-07-01 11:42:29 | INFO     | Forbidden trade tracked: forbidden_1782906149.251737 (confidence: 0.568)
+2026-07-01 11:42:29 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782906078.936353 | PnL: -0.17%
+2026-07-01 11:43:04 | INFO     | [CYCLE_45] HOLD | Confidence: 0.573 < 0.712
+2026-07-01 11:43:04 | INFO     | Forbidden trade tracked: forbidden_1782906184.416703 (confidence: 0.573)
+2026-07-01 11:43:04 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782906114.093054 | PnL: -0.17%
+2026-07-01 11:43:39 | INFO     | [CYCLE_46] HOLD | Confidence: 0.573 < 0.712
+2026-07-01 11:43:39 | INFO     | Forbidden trade tracked: forbidden_1782906219.571042 (confidence: 0.573)
+2026-07-01 11:43:39 | INFO     | Recorded forbidden trade outcome for Autotuner: forbidden_1782906149.251737 | PnL: -0.17%
+2026-07-01 11:43:39 | INFO     | \n============================================================
+2026-07-01 11:43:39 | INFO     | PERIODIC REPORT
+2026-07-01 11:43:39 | INFO     | ============================================================
+2026-07-01 11:43:39 | INFO     | Balance: 200.00 USDT (Start: 200.00)
+2026-07-01 11:43:39 | INFO     | PnL: 0.00 USDT (0.00%)
+2026-07-01 11:43:39 | INFO     | Projected Monthly PnL: 0.0%
+2026-07-01 11:43:39 | INFO     | Total Signals: 54
+2026-07-01 11:43:39 | INFO     | Open Decisions: 0
+2026-07-01 11:43:39 | INFO     | Hold Decisions: 54
+2026-07-01 11:43:39 | INFO     | Total Trades: 0
+2026-07-01 11:43:39 | INFO     | Winning Trades: 0
+2026-07-01 11:43:39 | INFO     | Losing Trades: 0
+2026-07-01 11:43:39 | INFO     | Winrate: 0.0%
+2026-07-01 11:43:39 | INFO     | Shadow Winrate: 27.8%
+2026-07-01 11:43:39 | INFO     | Avg Trade PnL: N/A
+2026-07-01 11:43:39 | INFO     | ============================================================\n
