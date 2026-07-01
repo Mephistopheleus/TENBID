@@ -5,6 +5,7 @@ Analysis Context - единый контейнер для всех данных 
 
 import pandas as pd
 from typing import Dict, List, Optional, Any
+from core.data_lineage import DataSource, LineageNode
 from core.data_lineage import DataLineageManager, LineageNode, lineage_manager
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from datetime import datetime
 class AnalysisContext:
     """Контекст анализа - хранит все данные и результаты с полной маркировкой"""
     
+    def __init__(self, symbol: str, timeframe: str, base_lineage: LineageNode = None):
     def __init__(self, symbol: str, timeframe: str, snapshot_id: str = None):
         self.symbol = symbol
         self.timeframe = timeframe
@@ -19,6 +21,7 @@ class AnalysisContext:
         self.market_data: Dict[str, pd.DataFrame] = {}  # {symbol: df}
         self.synthetic_data: Dict[str, pd.DataFrame] = {}  # {timeframe: df}
         self.results: Dict[str, Dict] = {}  # {analyzer_name: result_dict}
+        self.lineages: Dict[str, LineageNode] = {}  # {analyzer_name: lineage}
         self.node_ids: Dict[str, str] = {}  # {analyzer_name: node_id} - храним ID узлов вместо объектов
         self.metadata: Dict[str, Any] = {
             'created_at': datetime.now().isoformat(),
@@ -26,10 +29,12 @@ class AnalysisContext:
             'timeframe': timeframe
         }
     
+    def add_market_data(self, symbol: str, df: pd.DataFrame, lineage: LineageNode = None):
     def add_market_data(self, symbol: str, df: pd.DataFrame):
         """Добавляет рыночные данные (свечи)"""
         self.market_data[symbol] = df
     
+    def add_synthetic_data(self, timeframe: str, df: pd.DataFrame, lineage: LineageNode = None):
     def add_synthetic_data(self, timeframe: str, df: pd.DataFrame):
         """Добавляет синтетические таймфреймы"""
         self.synthetic_data[timeframe] = df
@@ -48,6 +53,8 @@ class AnalysisContext:
             return self.synthetic_data.get(timeframe) if timeframe else next(iter(self.synthetic_data.values()), None)
         return None
     
+    def add_result(self, analyzer_name: str, result: Dict, lineage: LineageNode = None):
+        """Добавляет результат анализа с маркировкой"""
     def add_result(self, analyzer_name: str, result: Dict, node_id: str = None):
         """Добавляет результат анализа с маркировкой
         
@@ -82,6 +89,8 @@ class AnalysisContext:
         
         return total_confidence / count if count > 0 else 0.0
     
+    def get_lineage_chain(self, analyzer_name: str = None) -> List[LineageNode]:
+        """Возвращает цепочку маркировок для трассировки"""
     def get_node_chain(self, analyzer_name: str = None) -> List[str]:
         """Возвращает цепочку ID узлов для трассировки
         

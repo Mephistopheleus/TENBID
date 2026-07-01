@@ -1,5 +1,4 @@
 """Trading module initialization"""
-from .position_sizer import PositionSizer
-from .smart_trailing import SmartTrailing
+from .adaptive_trailing import AdaptiveTrailing
 
-__all__ = ['PositionSizer', 'SmartTrailing']
+__all__ = ['AdaptiveTrailing']

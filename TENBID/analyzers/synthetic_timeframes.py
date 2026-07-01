@@ -1,12 +1,12 @@
 """Synthetic Timeframes Builder - builds higher TF from 5m base"""
 import pandas as pd
-from core.data_lineage import DataLineageManager, LineageNode, LineageGraph
+from core.data_lineage import DataLineageManager, LineageNode, LineageGraph, DataQuality, LineageTracker
 
 class SyntheticTimeframes:
     def __init__(self, config):
         self.timeframes = config.get_list('DATA', 'synthetic_timeframes')
     
-    def build_all(self, base_df, base_lineage: DataLineage):
+    def build_all(self, base_df, base_lineage: LineageNode):
         """Build all synthetic timeframes from base data
         
         Args:
@@ -50,4 +50,3 @@ class SyntheticTimeframes:
                 result[tf] = (synthetic_df, synthetic_lineage)
         
         return result
-

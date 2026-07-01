@@ -67,7 +67,26 @@ class Autotuner:
         self.history_window = 100  # Analyze last N trades
         # CRITICAL: Cold start protection - minimum trades before tuning
         self.MIN_TRADES_FOR_TUNING = 50  # Must have 50+ closed trades before optimization
+        self.SHADOW_BOOTSTRAP_MIN_SAMPLES = 100
+        self.SHADOW_BOOTSTRAP_MAX_TRUST = 0.35
+        self.SHADOW_BOOTSTRAP_MIN_NET_PROFIT_FLOOR = 0.40
+        self.SHADOW_BOOTSTRAP_MIN_PROBABILITY_FLOOR = 0.55
+        
+        # Granular trust: analyzer -> timeframe -> metric -> regime -> weight
+        # Example: trust_weights['fractal']['5m']['confidence']['TRENDING'] = 0.85
+        self.trust_weights = self._load_granular_trust()
+        
+        # Matrix parameters (controlled by autotuner, not hardcoded)
+        self.matrix_params = self._load_matrix_params()
+        
+        # TradeCalculator parameters
+        self.calculator_params = self._load_calculator_params()
+        
+        # Adaptive Trailing parameters
+        self.trailing_params = self._load_trailing_params()
+        
         logger.info(f"Autotuner initialized with MIN_TRADES_FOR_TUNING={self.MIN_TRADES_FOR_TUNING}")
+        logger.info(f"Granular trust levels loaded: {len(self.trust_weights)} analyzers")
         
     def _get_connection(self):
         return sqlite3.connect(self.db_path)
@@ -102,6 +121,179 @@ class Autotuner:
             "sl_aggressiveness": 1.0,  # Multiplier for SL calculation
             "size_confidence": 1.0     # Multiplier for position sizing
         }
+    
+    def _load_granular_trust(self) -> Dict[str, Dict[str, Dict[str, Dict[str, float]]]]:
+        """
+        Load granular trust weights: analyzer -> timeframe -> metric -> regime -> weight
+        Returns nested dict structure for precise trust control.
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT trust_json FROM granular_trust_log 
+                ORDER BY timestamp DESC LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                trust = json.loads(row[0])
+                logger.info(f"Loaded granular trust for {len(trust)} analyzers")
+                return trust
+        except Exception as e:
+            logger.warning(f"Could not load granular trust, using defaults: {e}")
+        finally:
+            conn.close()
+        
+        # Default granular trust structure
+        # Format: trust_weights[analyzer][timeframe][metric][regime] = weight
+        analyzers = ['market', 'fractal', 'pattern']
+        timeframes = ['5m', '15m', '1h', '4h']
+        metrics = ['confidence', 'strength', 'price_accuracy']
+        regimes = ['TRENDING', 'RANGING', 'VOLATILE', 'BREAKOUT', 'UNKNOWN']
+        
+        trust = {}
+        for analyzer in analyzers:
+            trust[analyzer] = {}
+            for tf in timeframes:
+                trust[analyzer][tf] = {}
+                for metric in metrics:
+                    trust[analyzer][tf][metric] = {}
+                    for regime in regimes:
+                        # Default: equal trust 0.7, will be optimized
+                        trust[analyzer][tf][metric][regime] = 0.7
+        
+        return trust
+    
+    def _load_matrix_params(self) -> Dict[str, Any]:
+        """Load probability matrix parameters from DB or return defaults."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT params_json FROM matrix_params_log 
+                ORDER BY timestamp DESC LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                params = json.loads(row[0])
+                logger.info(f"Loaded matrix params: {params}")
+                return params
+        except Exception as e:
+            logger.warning(f"Could not load matrix params, using defaults: {e}")
+        finally:
+            conn.close()
+        
+        # Default matrix parameters
+        return {
+            'time_horizon_minutes': 60,
+            'time_resolution_minutes': 1.0,
+            'price_levels': 100,
+            'price_range_percent': 3.0,
+            'blur_sigma_time': 2.0,
+            'blur_sigma_price': 1.5,
+            'min_probability_threshold': 0.55,
+            'zone_merge_distance': 5
+        }
+    
+    def _load_calculator_params(self) -> Dict[str, Any]:
+        """Load TradeCalculator parameters from DB or return defaults."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT params_json FROM calculator_params_log 
+                ORDER BY timestamp DESC LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                params = json.loads(row[0])
+                logger.info(f"Loaded calculator params: {params}")
+                return params
+        except Exception as e:
+            logger.warning(f"Could not load calculator params, using defaults: {e}")
+        finally:
+            conn.close()
+        
+        # Default TradeCalculator parameters
+        return {
+            'min_probability_threshold': 0.60,
+            'min_net_profit_pct': 0.5,
+            'min_risk_reward_ratio': 1.5,
+            'max_sl_percent': 2.0,
+            'sl_atr_multiplier': 1.5,
+            'commission_percent': 0.1,
+            'spread_percent': 0.05,
+            'slippage_percent': 0.03,
+            'zone_score_weights': {
+                'probability': 0.40,
+                'time_proximity': 0.20,
+                'price_proximity': 0.20,
+                'regime_match': 0.20
+            }
+        }
+    
+    def _load_trailing_params(self) -> Dict[str, Any]:
+        """Load AdaptiveTrailing parameters from DB or return defaults."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT params_json FROM trailing_params_log 
+                ORDER BY timestamp DESC LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                params = json.loads(row[0])
+                logger.info(f"Loaded trailing params: {params}")
+                return params
+        except Exception as e:
+            logger.warning(f"Could not load trailing params, using defaults: {e}")
+        finally:
+            conn.close()
+        
+        # Default AdaptiveTrailing parameters
+        return {
+            'breakeven_profit_pct': 0.5,
+            'breakeven_offset_pct': 0.1,
+            'atr_multiplier': 1.5,
+            'aggressive_trail_factor': 0.7,
+            'conservative_trail_factor': 1.3,
+            'forecast_horizon_minutes': 15,
+            'negative_forecast_threshold': -0.3,
+            'positive_forecast_threshold': 0.3
+        }
+    
+    def get_granular_trust(self, analyzer: str, timeframe: str, 
+                          metric: str = 'confidence', regime: str = 'UNKNOWN') -> float:
+        """
+        Get trust weight for specific analyzer + timeframe + metric + regime combination.
+        
+        Args:
+            analyzer: 'market', 'fractal', 'pattern'
+            timeframe: '5m', '15m', '1h', '4h'
+            metric: 'confidence', 'strength', 'price_accuracy'
+            regime: 'TRENDING', 'RANGING', 'VOLATILE', 'BREAKOUT', 'UNKNOWN'
+        
+        Returns:
+            Trust weight (0.0 to 1.0+)
+        """
+        try:
+            return self.trust_weights[analyzer][timeframe][metric][regime]
+        except KeyError:
+            logger.warning(f"Trust not found for {analyzer}/{timeframe}/{metric}/{regime}, using 0.5")
+            return 0.5
+    
+    def get_matrix_params(self) -> Dict[str, Any]:
+        """Return current matrix parameters."""
+        return self.matrix_params.copy()
+    
+    def get_trade_calculator_params(self) -> Dict[str, Any]:
+        """Return current TradeCalculator parameters."""
+        return self.calculator_params.copy()
+    
+    def get_trailing_params(self) -> Dict[str, Any]:
+        """Return current AdaptiveTrailing parameters."""
+        return self.trailing_params.copy()
 
     def record_trade_outcome(self, snapshot: TradeContextSnapshot):
         """Save a completed trade context for future analysis (real and shadow trades)."""
@@ -155,7 +347,10 @@ class Autotuner:
             
             # CRITICAL: Cold start protection
             if total_real_trades < self.MIN_TRADES_FOR_TUNING:
-                logger.info(f"Cold start protection: Only {total_real_trades}/{self.MIN_TRADES_FOR_TUNING} trades. Using default weights.")
+                if self._try_shadow_bootstrap(cursor, total_real_trades):
+                    return self.current_weights
+
+                logger.info(f"Cold start protection: Only {total_real_trades}/{self.MIN_TRADES_FOR_TUNING} real trades. Shadow bootstrap not active; using current defaults.")
                 return self.current_weights
             
             # Fetch recent history
@@ -186,16 +381,102 @@ class Autotuner:
         finally:
             conn.close()
 
+    def _try_shadow_bootstrap(self, cursor: sqlite3.Cursor, total_real_trades: int) -> bool:
+        """
+        Use completed shadow/forbidden outcomes as low-trust cold-start evidence.
+
+        Shadow trades are not treated as real trades. They can only make small,
+        bounded TradeCalculator nudges, and only when the skipped-trade sample is
+        at least neutral. If shadow outcomes are poor, the bootstrap explicitly
+        keeps the system conservative.
+        """
+        cursor.execute("""
+            SELECT pnl_percent, is_winner, exit_reason, shadow_reason
+            FROM trade_analysis_log
+            WHERE is_shadow = 1
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (self.history_window,))
+        rows = cursor.fetchall()
+
+        sample_size = len(rows)
+        if sample_size < self.SHADOW_BOOTSTRAP_MIN_SAMPLES:
+            logger.info(
+                "Cold start protection: Only %s/%s real trades and %s/%s shadow outcomes. "
+                "Waiting for enough shadow evidence.",
+                total_real_trades, self.MIN_TRADES_FOR_TUNING,
+                sample_size, self.SHADOW_BOOTSTRAP_MIN_SAMPLES,
+            )
+            return False
+
+        pnls = [float(row[0] or 0.0) for row in rows]
+        winners = sum(1 for row in rows if int(row[1] or 0) == 1 and float(row[0] or 0.0) > 0.0)
+        winrate = winners / sample_size if sample_size else 0.0
+        avg_pnl = float(np.mean(pnls)) if pnls else 0.0
+        recent_avg_pnl = float(np.mean(pnls[:30])) if len(pnls) >= 30 else avg_pnl
+        stability_penalty = min(0.15, abs(avg_pnl - recent_avg_pnl))
+        sample_trust = min(1.0, sample_size / 200.0)
+        quality_trust = max(0.0, min(1.0, (winrate - 0.35) / 0.35))
+        shadow_trust = min(self.SHADOW_BOOTSTRAP_MAX_TRUST, sample_trust * quality_trust - stability_penalty)
+
+        logger.info(
+            "Shadow bootstrap stats: samples=%s, avg_pnl=%.3f%%, recent_avg=%.3f%%, "
+            "winrate=%.1f%%, trust=%.2f",
+            sample_size, avg_pnl, recent_avg_pnl, winrate * 100.0, shadow_trust,
+        )
+
+        if avg_pnl < 0.0 or winrate < 0.40 or shadow_trust <= 0.0:
+            logger.info(
+                "Shadow bootstrap: skipped trades are not profitable enough. "
+                "Keeping conservative TradeCalculator params; no loosening applied."
+            )
+            return True
+
+        old_min_profit = float(self.calculator_params.get('min_net_profit_pct', 0.5))
+        old_min_probability = float(self.calculator_params.get('min_probability_threshold', 0.60))
+        max_step = 0.05 * shadow_trust
+
+        target_min_profit = max(
+            self.SHADOW_BOOTSTRAP_MIN_NET_PROFIT_FLOOR,
+            old_min_profit - max_step,
+        )
+        target_min_probability = max(
+            self.SHADOW_BOOTSTRAP_MIN_PROBABILITY_FLOOR,
+            old_min_probability - max_step,
+        )
+
+        changed = False
+        if target_min_profit < old_min_profit:
+            self.calculator_params['min_net_profit_pct'] = round(target_min_profit, 4)
+            changed = True
+        if target_min_probability < old_min_probability:
+            self.calculator_params['min_probability_threshold'] = round(target_min_probability, 4)
+            changed = True
+
+        if changed:
+            self._save_calculator_params()
+            logger.info(
+                "Shadow bootstrap applied cautiously: min_net_profit_pct %.3f -> %.3f, "
+                "min_probability_threshold %.3f -> %.3f",
+                old_min_profit, self.calculator_params['min_net_profit_pct'],
+                old_min_probability, self.calculator_params['min_probability_threshold'],
+            )
+        else:
+            logger.info("Shadow bootstrap found no safe parameter change.")
+
+        return True
+
     def _row_to_snapshot(self, row: tuple) -> TradeContextSnapshot:
         # Mapping DB columns to dataclass fields (simplified for brevity)
         # Assuming column order matches insert statement roughly
         return TradeContextSnapshot(
             trade_id=row[1], timestamp=row[2], symbol=row[3], side=row[4],
-            btc_correlation=row[5], fractal_score=row[6], orderbook_score=row[7],
-            pattern_score=row[8], regime_score=row[9], regime_type=row[10],
-            weights_used=json.loads(row[11]), sl_percent=row[12], position_size=row[13],
-            pnl_percent=row[14], pnl_usdt=row[15], is_winner=bool(row[16]),
-            exit_reason=row[17], max_drawdown_during_trade=row[18], max_profit_during_trade=row[19],
+            btc_correlation=row[5], btc_confidence=row[6], fractal_score=row[7], orderbook_score=row[8],
+            pattern_score=row[9], regime_score=row[10], regime_type=row[11],
+            weights_used=json.loads(row[12]), sl_percent=row[13], position_size=row[14],
+            pnl_percent=row[15], pnl_usdt=row[16], is_winner=bool(row[17]),
+            exit_reason=row[18], max_drawdown_during_trade=row[19], max_profit_during_trade=row[20],
+            is_shadow=bool(row[21]), shadow_reason=row[22],
             entry_price=0.0, tp_percent=0.0, exit_price=0.0, final_confidence=0.0 # Missing in simple select, fill defaults
         )
 
@@ -473,6 +754,233 @@ class Autotuner:
             return new_weights
         
         return None
+    
+    def optimize_granular_trust(self, forecast_history: List[Dict[str, Any]]):
+        """
+        Optimize granular trust weights based on forecast accuracy history.
+        
+        Args:
+            forecast_history: List of dicts with keys:
+                - analyzer: str
+                - timeframe: str
+                - metric: str (confidence, strength, price_accuracy)
+                - regime: str
+                - forecast_value: float
+                - actual_outcome: float (1.0 = correct, 0.0 = wrong, 0.5 = partial)
+                - timestamp: float
+        """
+        if not forecast_history or len(forecast_history) < 20:
+            logger.info("Not enough forecast history for granular trust optimization")
+            return
+        
+        logger.info(f"🎯 Optimizing granular trust based on {len(forecast_history)} forecasts")
+        
+        # Group forecasts by (analyzer, timeframe, metric, regime)
+        groups = {}
+        for item in forecast_history:
+            key = (item['analyzer'], item['timeframe'], item['metric'], item['regime'])
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(item)
+        
+        # Calculate accuracy for each group
+        updated_count = 0
+        for (analyzer, tf, metric, regime), forecasts in groups.items():
+            if len(forecasts) < 5:  # Need minimum sample size
+                continue
+            
+            # Calculate weighted accuracy (recent forecasts matter more)
+            total_weight = 0.0
+            weighted_accuracy = 0.0
+            
+            for i, fc in enumerate(forecasts):
+                # Exponential decay: recent = 1.0, oldest = 0.5
+                recency_weight = 0.5 + 0.5 * (i / len(forecasts))
+                weighted_accuracy += fc['actual_outcome'] * recency_weight
+                total_weight += recency_weight
+            
+            accuracy = weighted_accuracy / total_weight if total_weight > 0 else 0.5
+            
+            # Update trust weight
+            # High accuracy (>0.7) -> increase trust
+            # Low accuracy (<0.4) -> decrease trust
+            old_trust = self.trust_weights[analyzer][tf][metric][regime]
+            
+            if accuracy > 0.7:
+                new_trust = min(1.0, old_trust * 1.1)
+            elif accuracy < 0.4:
+                new_trust = max(0.1, old_trust * 0.85)
+            else:
+                # Gradual adjustment toward accuracy
+                new_trust = old_trust * 0.9 + accuracy * 0.1
+            
+            self.trust_weights[analyzer][tf][metric][regime] = new_trust
+            
+            if abs(new_trust - old_trust) > 0.05:
+                logger.info(f"Trust updated: {analyzer}/{tf}/{metric}/{regime}: "
+                           f"{old_trust:.3f} -> {new_trust:.3f} (accuracy: {accuracy:.3f})")
+                updated_count += 1
+        
+        if updated_count > 0:
+            self._save_granular_trust(len(forecast_history))
+            logger.info(f"✅ Updated {updated_count} granular trust weights")
+    
+    def optimize_for_perfect_performance(self, recent_trades: List[TradeContextSnapshot]):
+        """
+        Aggressive optimization targeting 100% WinRate / 100% PnL / 0% Drawdown.
+        
+        Strategy:
+        1. Identify losing patterns and eliminate them
+        2. Boost parameters that correlate with winners
+        3. Tighten entry criteria to avoid marginal trades
+        4. Optimize SL/TP based on actual price movements
+        """
+        if not recent_trades or len(recent_trades) < 10:
+            logger.info("Not enough trades for perfect performance optimization")
+            return
+        
+        logger.info(f"🎯 Optimizing for 100WR/100PnL/0DD based on {len(recent_trades)} trades")
+        
+        winners = [t for t in recent_trades if t.is_winner]
+        losers = [t for t in recent_trades if not t.is_winner]
+        
+        win_rate = len(winners) / len(recent_trades) if recent_trades else 0
+        avg_pnl = np.mean([t.pnl_percent for t in recent_trades])
+        max_dd = max([t.max_drawdown_during_trade for t in recent_trades]) if recent_trades else 0
+        
+        logger.info(f"Current: WR={win_rate:.1%}, AvgPnL={avg_pnl:.2%}, MaxDD={max_dd:.2%}")
+        
+        # 1. Increase probability threshold if WinRate < 100%
+        if win_rate < 1.0 and losers:
+            # Find minimum probability among losers
+            loser_probs = [t.final_confidence for t in losers if hasattr(t, 'final_confidence')]
+            if loser_probs:
+                max_loser_prob = max(loser_probs)
+                new_threshold = min(0.85, max_loser_prob + 0.05)
+                old_threshold = self.calculator_params['min_probability_threshold']
+                
+                if new_threshold > old_threshold:
+                    self.calculator_params['min_probability_threshold'] = new_threshold
+                    logger.info(f"📈 Increased probability threshold: {old_threshold:.2f} -> {new_threshold:.2f}")
+        
+        # 2. Optimize SL based on actual drawdowns
+        if losers:
+            avg_loser_dd = np.mean([abs(t.max_drawdown_during_trade) for t in losers])
+            # Set SL tighter than average losing drawdown
+            optimal_sl = max(0.5, avg_loser_dd * 0.8)
+            
+            if optimal_sl < self.calculator_params['max_sl_percent']:
+                self.calculator_params['max_sl_percent'] = optimal_sl
+                logger.info(f"🛡️ Tightened max SL: {optimal_sl:.2%}")
+        
+        # 3. Increase min profit requirement
+        if avg_pnl < 1.0:  # Target 1%+ per trade
+            new_min_profit = min(1.0, self.calculator_params['min_net_profit_pct'] * 1.1)
+            self.calculator_params['min_net_profit_pct'] = new_min_profit
+            logger.info(f"💰 Increased min profit requirement: {new_min_profit:.2%}")
+        
+        # 4. Optimize trailing parameters based on winners
+        if winners:
+            # Check how much profit was left on table
+            missed_profits = [t.max_profit_during_trade - t.pnl_percent 
+                            for t in winners if t.max_profit_during_trade > t.pnl_percent]
+            
+            if missed_profits and np.mean(missed_profits) > 0.5:
+                # Too aggressive trailing, make it more conservative
+                self.trailing_params['conservative_trail_factor'] *= 1.05
+                logger.info(f"🐌 Made trailing more conservative (missed avg {np.mean(missed_profits):.2%})")
+            elif missed_profits and np.mean(missed_profits) < 0.1:
+                # Good trailing, can be slightly more aggressive
+                self.trailing_params['aggressive_trail_factor'] *= 0.98
+                logger.info(f"🚀 Made trailing slightly more aggressive")
+        
+        # 5. Adjust matrix parameters for better forecasting
+        if win_rate < 0.9:
+            # Increase blur for smoother probability distribution
+            self.matrix_params['blur_sigma_time'] = min(3.0, self.matrix_params['blur_sigma_time'] * 1.05)
+            self.matrix_params['blur_sigma_price'] = min(2.5, self.matrix_params['blur_sigma_price'] * 1.05)
+            logger.info(f"🌊 Increased matrix blur for smoother forecasts")
+        
+        # 6. Increase R/R requirement
+        if losers:
+            avg_loser_size = np.mean([abs(t.pnl_percent) for t in losers])
+            avg_winner_size = np.mean([t.pnl_percent for t in winners]) if winners else 0
+            
+            if avg_winner_size > 0:
+                optimal_rr = max(2.0, avg_winner_size / avg_loser_size)
+                self.calculator_params['min_risk_reward_ratio'] = min(3.0, optimal_rr)
+                logger.info(f"⚖️ Adjusted R/R requirement: {optimal_rr:.2f}")
+        
+        # Save all updated parameters
+        self._save_matrix_params()
+        self._save_calculator_params()
+        self._save_trailing_params()
+        
+        logger.info("✅ Perfect performance optimization complete")
+    
+    def _save_granular_trust(self, sample_size: int):
+        """Save granular trust weights to DB."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO granular_trust_log (timestamp, trust_json, sample_size)
+                VALUES (?, ?, ?)
+            """, (datetime.now().timestamp(), json.dumps(self.trust_weights), sample_size))
+            conn.commit()
+            logger.debug(f"Granular trust saved ({sample_size} samples)")
+        except Exception as e:
+            logger.error(f"Failed to save granular trust: {e}")
+        finally:
+            conn.close()
+    
+    def _save_matrix_params(self):
+        """Save matrix parameters to DB."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO matrix_params_log (timestamp, params_json)
+                VALUES (?, ?)
+            """, (datetime.now().timestamp(), json.dumps(self.matrix_params)))
+            conn.commit()
+            logger.debug("Matrix params saved")
+        except Exception as e:
+            logger.error(f"Failed to save matrix params: {e}")
+        finally:
+            conn.close()
+    
+    def _save_calculator_params(self):
+        """Save calculator parameters to DB."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO calculator_params_log (timestamp, params_json)
+                VALUES (?, ?)
+            """, (datetime.now().timestamp(), json.dumps(self.calculator_params)))
+            conn.commit()
+            logger.debug("Calculator params saved")
+        except Exception as e:
+            logger.error(f"Failed to save calculator params: {e}")
+        finally:
+            conn.close()
+    
+    def _save_trailing_params(self):
+        """Save trailing parameters to DB."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO trailing_params_log (timestamp, params_json)
+                VALUES (?, ?)
+            """, (datetime.now().timestamp(), json.dumps(self.trailing_params)))
+            conn.commit()
+            logger.debug("Trailing params saved")
+        except Exception as e:
+            logger.error(f"Failed to save trailing params: {e}")
+        finally:
+            conn.close()
 
     def _save_weights(self, weights: Dict[str, float], sample_size: int, source: str = "regular"):
         """Сохраняет веса в БД с указанием источника (обычный или из лаборатории)."""
@@ -538,6 +1046,39 @@ def init_autotuner_db(db_path: str = "trade_history.db"):
         weights_json TEXT,
         sample_size INTEGER,
         source TEXT DEFAULT 'regular'
+    )
+    """)
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS granular_trust_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp REAL,
+        trust_json TEXT,
+        sample_size INTEGER
+    )
+    """)
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS matrix_params_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp REAL,
+        params_json TEXT
+    )
+    """)
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS calculator_params_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp REAL,
+        params_json TEXT
+    )
+    """)
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS trailing_params_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp REAL,
+        params_json TEXT
     )
     """)
     

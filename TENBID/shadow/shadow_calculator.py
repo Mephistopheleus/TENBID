@@ -111,8 +111,9 @@ class ShadowCalculator:
         
         # Use realistic SL/TP based on current market conditions
         # Instead of fixed 2%, use dynamic levels based on volatility or ATR if available
-        base_sl_pct = 0.02  # 2% default
-        base_tp_pct = 0.04  # 4% default (2:1 RR)
+        # Use percentage units (consistent with PositionSizer which returns percents like 0.5..3.0)
+        base_sl_pct = 2.0  # 2% default
+        base_tp_pct = 4.0  # 4% default (2:1 RR)
         
         # Apply stricter conditions for shadow analysis
         # Add buffer for costs to ensure profitability
