@@ -27,7 +27,7 @@ class ExecutorRequest:
     notional_usdt: float
     reference_price: float
     execution_connection: str = "BINANCE_TESTNET"
-    testnet_only: bool = True
+    testnet_only: bool = False
     reduce_only: bool = False
     payload: Dict[str, object] = field(default_factory=dict)
     request_id: str = field(default_factory=lambda: new_id("EXEC_REQ"))

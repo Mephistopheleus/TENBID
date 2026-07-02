@@ -131,7 +131,7 @@ class RiskManager:
         return RiskDecision(
             plan_id=plan.plan_id,
             status=status,
-            reason="testnet_plan_admissible_with_recorded_warnings" if warnings else "testnet_plan_admissible",
+            reason="plan_admissible_with_recorded_warnings" if warnings else "plan_admissible",
             approved_for_executor=True,
             profile_id=plan.profile_id,
             state_matrix_id=plan.state_matrix_id,
@@ -151,7 +151,6 @@ class RiskManager:
         execution_blocking_enabled = bool(profile_values.get("execution_blocking_enabled", True))
         return {
             "not_executor": True,
-            "testnet_feedback_mode": True,
             "decision": plan.decision,
             "plan_role": plan.plan_role,
             "net_expected_edge_pct": plan.net_expected_edge_pct,

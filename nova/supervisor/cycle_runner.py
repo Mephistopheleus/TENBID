@@ -566,7 +566,7 @@ class CycleRunner:
                     )
                 )
 
-        if executor_accepted and bool(profile_values.get("testnet_auto_close_enabled", False)):
+        if executor_accepted and bool(profile_values.get("position_auto_close_enabled", False)):
             close_attempt = executor.close_reduce_only(
                 trade_plan=plan,
                 entry_attempt=attempt,

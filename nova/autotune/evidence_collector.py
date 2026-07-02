@@ -56,5 +56,25 @@ class EvidenceCollector:
             observations={"minimum_sample_before_tuning": 50, **observations},
         )
 
-    def collect_real_testnet(self, **kwargs: object) -> AutotuneEvidence:
-        return self.collect_real_exchange(**kwargs)
+    def collect_real_testnet(
+        self,
+        *,
+        profile_id: str,
+        parameter_snapshot: Dict[str, object],
+        observations: Dict[str, object],
+        plan_id: Optional[str] = None,
+        scenario_id: Optional[str] = None,
+        risk_decision_id: Optional[str] = None,
+        executor_result_id: Optional[str] = None,
+    ) -> AutotuneEvidence:
+        return self.collect_feedback(
+            source_type=AutotuneEvidenceSource.REAL_TESTNET,
+            source_weight=1.0,
+            profile_id=profile_id,
+            plan_id=plan_id,
+            scenario_id=scenario_id,
+            risk_decision_id=risk_decision_id,
+            executor_result_id=executor_result_id,
+            parameter_snapshot=parameter_snapshot,
+            observations={"minimum_sample_before_tuning": 50, **observations},
+        )
