@@ -1,8 +1,55 @@
+```
+# Python compiled files
 __pycache__/
-*.py[cod]
-.pytest_cache/
-.venv/
-logs/
-*.db
-*.sqlite
+*.pyc
+*.pyo
+*.pyd
 
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+nova_history.db
+
+# Configuration rollbacks
+config/profile_rollbacks/
+
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Dependencies
+venv/
+.venv/
+.env/
+node_modules/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Build artifacts
+dist/
+build/
+target/
+.mypy_cache/
+.pytest_cache/
+
+# Temporary files
+*.tmp
+*.temp
+```
