@@ -29,5 +29,7 @@
   "trailing_giveback_pct": 0.25,
   "orderbook_min_interval_sec": 30,
   "native_tf_reconcile_interval_sec": 900,
-  "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION"
+  "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION",
+  "testnet_order_notional_fraction": 1.0,
+  "testnet_order_notional_cap_usdt": 50.0
 }
