@@ -20,7 +20,6 @@
   "minimum_shadow_samples_before_execution": 0,
   "shadow_outcome_sample_count": 36,
   "execution_blocking_enabled": true,
-  "testnet_auto_close_enabled": false,
   "orderbook_required_for_execution": true,
   "scenario_recheck_blocks_execution": true,
   "position_manager_enabled": true,
@@ -29,7 +28,5 @@
   "trailing_giveback_pct": 0.25,
   "orderbook_min_interval_sec": 30,
   "native_tf_reconcile_interval_sec": 900,
-  "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION",
-  "testnet_order_notional_fraction": 1.0,
-  "testnet_order_notional_cap_usdt": 50.0
+  "intrabar_resolution_policy": "ON_AMBIGUOUS_OR_ACTIVE_POSITION"
 }

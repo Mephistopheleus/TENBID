@@ -45,6 +45,8 @@ class RuntimeConfig:
     orderbook_limit: int
     orderbook_ttl_sec: float
     reconcile_interval_sec: float
+    cycle_interval_sec: float
+    battle_mode: bool
     event_log_path: Path
     sqlite_path: Path
     secrets: configparser.ConfigParser
@@ -97,6 +99,8 @@ class ConfigLoader:
             orderbook_limit=base.getint("DATA", "orderbook_limit", fallback=20),
             orderbook_ttl_sec=base.getfloat("DATA", "orderbook_ttl_sec", fallback=10.0),
             reconcile_interval_sec=base.getfloat("DATA", "reconcile_interval_sec", fallback=60.0),
+            cycle_interval_sec=base.getfloat("GENERAL", "cycle_interval_sec", fallback=0.0),
+            battle_mode=base.getboolean("GENERAL", "battle_mode", fallback=False),
             event_log_path=self.root_dir / base.get("LOGGING", "event_log_path", fallback="logs/events.jsonl"),
             sqlite_path=self.root_dir / base.get("LOGGING", "sqlite_path", fallback="nova_history.db"),
             secrets=secrets,

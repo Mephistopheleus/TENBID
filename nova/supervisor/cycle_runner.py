@@ -566,32 +566,6 @@ class CycleRunner:
                     )
                 )
 
-        if executor_accepted and bool(profile_values.get("position_auto_close_enabled", False)):
-            close_attempt = executor.close_reduce_only(
-                trade_plan=plan,
-                entry_attempt=attempt,
-                risk_decision=risk_decision,
-            )
-            if close_attempt.request is not None:
-                self._record(
-                    Event(
-                        event_type=EventTypes.EXECUTOR_REQUEST_CREATED,
-                        run_id=self.run_id,
-                        cycle_id=cycle_id,
-                        source="ExchangeExecutor",
-                        payload=asdict(close_attempt.request),
-                    )
-                )
-            self._record(
-                Event(
-                    event_type=EventTypes.EXECUTOR_RESULT_RECORDED,
-                    run_id=self.run_id,
-                    cycle_id=cycle_id,
-                    source="ExchangeExecutor",
-                    payload={**asdict(close_attempt.result), "close_attempt": True},
-                )
-            )
-
         shadow_request = ShadowEngine().on_trade_plan(plan, risk_decision)
         self._record(
             Event(
@@ -644,7 +618,6 @@ class CycleRunner:
                 "autotuner_trust_points": plan.dynamics_summary.get("autotuner_trust_points"),
                 "effective_confidence": plan.dynamics_summary.get("effective_confidence", plan.confidence),
                 "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
-                "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
                 "net_expected_edge_pct": plan.net_expected_edge_pct,
                 "rr_ratio": plan.rr_ratio,
                 "recheck_required": plan.dynamics_summary.get("recheck_required"),

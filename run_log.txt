@@ -1,1 +1,1 @@
-NOVA run RUN_20260702T061345711088Z_d9279780 completed: PREPARE_LONG (scenario_calculated_for_risk_review)
+NOVA run RUN_20260702T095321573975Z_577acd87 completed: PREPARE_SHORT (scenario_calculated_for_risk_review)

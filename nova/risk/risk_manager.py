@@ -67,14 +67,6 @@ class RiskManager:
             else:
                 warnings.append("effective_confidence_below_profile_threshold")
 
-        minimum_shadow_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
-        shadow_sample_count = int(profile_values.get("shadow_outcome_sample_count", 0))
-        if shadow_sample_count < minimum_shadow_samples:
-            if execution_blocking_enabled:
-                hard_blocks.append("minimum_shadow_samples_not_reached")
-            else:
-                warnings.append("minimum_shadow_samples_not_reached")
-
         if state_matrix is None:
             if execution_blocking_enabled:
                 hard_blocks.append("missing_state_matrix_object")
@@ -114,11 +106,10 @@ class RiskManager:
         warnings = sorted(set(warnings))
         if hard_blocks:
             hard_blocks = sorted(set(hard_blocks))
-            shadow_first = "minimum_shadow_samples_not_reached" in hard_blocks
             return RiskDecision(
                 plan_id=plan.plan_id,
-                status=RiskDecisionStatus.SHADOW_FIRST_REQUIRED if shadow_first else RiskDecisionStatus.REJECTED,
-                reason="shadow_outcome_minimum_not_reached" if shadow_first else "hard_risk_blocks_present",
+                status=RiskDecisionStatus.REJECTED,
+                reason="hard_risk_blocks_present",
                 approved_for_executor=False,
                 profile_id=plan.profile_id,
                 state_matrix_id=plan.state_matrix_id,
@@ -162,7 +153,6 @@ class RiskManager:
             "state_context_trust_score": state_matrix.trust_score if state_matrix else None,
             "state_liquidity_state": state_matrix.liquidity_state if state_matrix else None,
             "active_positions_count": active_positions_count,
-            "minimum_shadow_samples_before_execution": profile_values.get("minimum_shadow_samples_before_execution", 50),
             "shadow_outcome_sample_count": profile_values.get("shadow_outcome_sample_count", 0),
             "execution_blocking_enabled": execution_blocking_enabled,
             "profile_refs": {

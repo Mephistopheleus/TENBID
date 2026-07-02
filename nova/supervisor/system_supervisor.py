@@ -8,6 +8,7 @@ connection through the same lifecycle used for live execution.
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -147,16 +148,40 @@ class SystemSupervisor:
             if refresh_result:
                 current_market_snapshot = refresh_result.snapshot
 
-        plan = CycleRunner(
-            run_id=run_id,
-            config=config,
-            event_log=event_log,
-            history_db=history_db,
-            market_snapshot=current_market_snapshot,
-            warmup_error=warmup_error,
-        ).run_once()
+        if config.battle_mode:
+            while True:
+                plan = CycleRunner(
+                    run_id=run_id,
+                    config=config,
+                    event_log=event_log,
+                    history_db=history_db,
+                    market_snapshot=current_market_snapshot,
+                    warmup_error=warmup_error,
+                ).run_once()
 
-        print(f"NOVA run {run_id} completed: {plan.decision} ({plan.reason})")
+                print(f"NOVA cycle {run_id} completed: {plan.decision} ({plan.reason})")
+
+                fresh_snapshot = self._refresh_market_snapshot(
+                    config,
+                    run_id,
+                    event_log,
+                    history_db,
+                    candle_cache,
+                    orderbook_cache,
+                )
+                if fresh_snapshot:
+                    current_market_snapshot = fresh_snapshot.snapshot
+        else:
+            plan = CycleRunner(
+                run_id=run_id,
+                config=config,
+                event_log=event_log,
+                history_db=history_db,
+                market_snapshot=current_market_snapshot,
+                warmup_error=warmup_error,
+            ).run_once()
+
+            print(f"NOVA run {run_id} completed: {plan.decision} ({plan.reason})")
 
     def _warmup_market_data(
         self,

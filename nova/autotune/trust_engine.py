@@ -36,33 +36,22 @@ class TrustEngine:
     ) -> TrustUpdateResult:
         samples = list(outcomes)
         sample_count = len(samples)
-        current = float(
-            profile_values.get(
-                "market_structure_analyzer_trust_points",
-                profile_values.get("analyzer_initial_trust_points", 0.1),
-            )
-        )
-        minimum = float(profile_values.get("analyzer_initial_trust_points", 0.1))
-        minimum_samples = int(profile_values.get("minimum_shadow_samples_before_execution", 50))
+        current_rr = float(profile_values.get("target_rr_min", 1.2))
+        current_edge = float(profile_values.get("min_net_edge_pct", 0.12))
         if sample_count <= 0:
-            return TrustUpdateResult(None, 0, 0, 0, 0, current, "no_traceable_outcomes", {})
+            return TrustUpdateResult(None, 0, 0, 0, 0, 0.0, "no_traceable_outcomes", {})
 
         wins = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_WIN)
         losses = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_LOSS)
         flats = sum(1 for outcome in samples if outcome.result == OutcomeResult.OBSERVED_FLAT)
         winrate = wins / sample_count
         avg_net_pnl = sum(outcome.net_pnl_pct for outcome in samples) / sample_count
-        maturity = min(1.0, sample_count / max(1, minimum_samples))
+        maturity = 1.0
         diagnostics = self._diagnostics(samples)
-        directional_score = (winrate - 0.5) * 0.20
-        pnl_score = max(-0.05, min(0.05, avg_net_pnl / 100.0))
-        proposed = max(minimum, min(0.9, current + (directional_score + pnl_score) * maturity))
-
-        if abs(proposed - current) < 0.005:
-            return TrustUpdateResult(None, sample_count, wins, losses, flats, proposed, "trust_delta_too_small", diagnostics)
-
+        
+        # Adjust decision thresholds based on performance, not analyzer trust
         rr_adjustment = self._threshold_adjustment(
-            current=float(profile_values.get("target_rr_min", 1.2)),
+            current=current_rr,
             winrate=winrate,
             avg_net_pnl=avg_net_pnl,
             low=0.8,
@@ -70,7 +59,7 @@ class TrustEngine:
             step=0.05,
         )
         edge_adjustment = self._threshold_adjustment(
-            current=float(profile_values.get("min_net_edge_pct", 0.12)),
+            current=current_edge,
             winrate=winrate,
             avg_net_pnl=avg_net_pnl,
             low=0.05,
@@ -78,16 +67,21 @@ class TrustEngine:
             step=0.02,
         )
         parameter_changes: dict[str, object] = {
-            "market_structure_analyzer_trust_points": round(proposed, 4),
             "shadow_outcome_sample_count": sample_count,
         }
-        target_specs = ["market_structure_analyzer_trust_points", "shadow_outcome_sample_count"]
+        target_specs = ["shadow_outcome_sample_count"]
         if rr_adjustment is not None:
             parameter_changes["target_rr_min"] = rr_adjustment
             target_specs.append("target_rr_min")
         if edge_adjustment is not None:
             parameter_changes["min_net_edge_pct"] = edge_adjustment
             target_specs.append("min_net_edge_pct")
+        
+        proposed_trust = float(profile_values.get("market_structure_analyzer_trust_points", 0.1))
+        
+        if not parameter_changes or len(parameter_changes) == 1 and "shadow_outcome_sample_count" in parameter_changes:
+            return TrustUpdateResult(None, sample_count, wins, losses, flats, proposed_trust, "no_significant_changes", diagnostics)
+
         recommendation = AutotuneRecommendation(
             target_profile_id=target_profile_id,
             parameter_changes=parameter_changes,
@@ -95,13 +89,13 @@ class TrustEngine:
             sample_size=sample_count,
             confidence=maturity,
             reason=(
-                "traceable_outcome_trust_update; "
+                "traceable_outcome_threshold_update; "
                 f"wins={wins}, losses={losses}, flats={flats}, avg_net_pnl={avg_net_pnl:.4f}, maturity={maturity:.4f}"
             ),
             target_parameter_specs=target_specs,
             rollback_condition="owner_revert_or_negative_traceable_outcome_drift",
         )
-        return TrustUpdateResult(recommendation, sample_count, wins, losses, flats, proposed, "recommendation_created", diagnostics)
+        return TrustUpdateResult(recommendation, sample_count, wins, losses, flats, proposed_trust, "recommendation_created", diagnostics)
 
     @staticmethod
     def _threshold_adjustment(

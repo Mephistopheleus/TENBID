@@ -156,9 +156,6 @@ class OutcomeRecorder:
         )
         return outcome, event
 
-    def record_testnet_close(self, **kwargs: Any) -> tuple[ScenarioOutcome, Event]:
-        return self.record_exchange_close(**kwargs)
-
     def record_position_manager_close(
         self,
         *,

@@ -61,7 +61,6 @@ class ExchangeExecutor:
                 notional_usdt=float(order["notional_usdt"]),
                 reference_price=float(order["mark_price"]),
                 execution_connection=self.config.execution_connection,
-                testnet_only=self.config.execution_connection == "BINANCE_TESTNET",
                 reduce_only=False,
                 payload={
                     "filters": order.get("filters", {}),
@@ -140,7 +139,6 @@ class ExchangeExecutor:
             notional_usdt=float(quantity) * float(reference_price or 0.0),
             reference_price=float(reference_price or 0.0),
             execution_connection=self.config.execution_connection,
-            testnet_only=self.config.execution_connection == "BINANCE_TESTNET",
             reduce_only=True,
             payload={
                 "entry_result_id": entry_attempt.result.result_id,
@@ -229,16 +227,13 @@ class ExchangeExecutor:
             notional_usdt=float(quantity) * float(reference_price or 0.0),
             reference_price=float(reference_price or 0.0),
             execution_connection=self.config.execution_connection,
-            testnet_only=self.config.execution_connection == "BINANCE_TESTNET",
             reduce_only=True,
             payload={"purpose": "position_manager_close", "reason": reason},
         )
 
     def _notional_usdt(self, adjusted_size_factor: float) -> float:
-        fraction = float(self.config.profile.values.get("testnet_order_notional_fraction", 0.20))
-        cap = float(self.config.profile.values.get("testnet_order_notional_cap_usdt", 10.0))
-        raw = self.config.initial_balance_usdt * max(0.0, fraction) * max(0.0, adjusted_size_factor)
-        return max(0.0, min(raw, cap))
+        base_notional = self.config.initial_balance_usdt * max(0.0, adjusted_size_factor)
+        return base_notional
 
     @staticmethod
     def _side_from_plan(plan: TradePlan) -> Optional[str]:

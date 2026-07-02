@@ -43,9 +43,6 @@ class ProfileManager:
     """Applies validated recommendations atomically to the active profile."""
 
     _SPECS: dict[str, ParameterSpec] = {
-        "market_structure_analyzer_trust_points": ParameterSpec(
-            "market_structure_analyzer_trust_points", float, minimum=0.0, maximum=0.9
-        ),
         "shadow_outcome_sample_count": ParameterSpec(
             "shadow_outcome_sample_count", int, minimum=0, maximum=1_000_000
         ),
